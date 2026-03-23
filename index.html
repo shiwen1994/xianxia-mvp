@@ -320,7 +320,7 @@ function damagePlayer(pig) {
   window.clearTimeout(invincibleTimer);
   invincibleTimer = window.setTimeout(() => {
     invincible = false;
-  }, 300);
+  }, 1000);
   knockPigBack(pig);
   if (playerHP <= 0) triggerGameOver();
 }
@@ -353,172 +353,89 @@ function drawAttackSword(sx, sy) {
   if (!attackSword.active) return;
 
   const elapsed = performance.now() - attackSword.startedAt;
-  const flashDuration = 80;
-  const progress = Math.min(elapsed / flashDuration, 1);
+  const progress = Math.min(elapsed / ATTACK_SWORD_DURATION, 1);
   if (progress >= 1) {
     attackSword.active = false;
     return;
   }
 
   const fade = 1 - progress;
-  const flicker = 0.58 + Math.abs(Math.sin(elapsed * 0.92)) * 0.42;
-  const muzzleConfigs = [
-    { x: 0, y: 2, rotation: Math.PI / 2 },
-    { x: -6, y: 0, rotation: Math.PI },
-    { x: 0, y: -4, rotation: -Math.PI / 2 },
-    { x: 6, y: 0, rotation: 0 }
+  const eased = 1 - Math.pow(1 - progress, 3);
+  const swingConfigs = [
+    { x: 0, y: 5, angle: Math.PI / 2 },
+    { x: -6, y: 0, angle: Math.PI },
+    { x: 0, y: -6, angle: -Math.PI / 2 },
+    { x: 6, y: 0, angle: 0 }
   ];
-  const cfg = muzzleConfigs[attackSword.dir];
-  const barrelLen = 13 + fade * 5;
-  const muzzleX = barrelLen + 1;
-  const flameLen = 14 + fade * 12 + flicker * 8;
-  const flameWidth = 5 + fade * 3.5;
-  const coreLen = 9 + fade * 6 + flicker * 3;
-  const smokeSpread = 7 + progress * 10;
-  const smokeLift = (progress - 0.2) * 5;
+  const cfg = swingConfigs[attackSword.dir];
+  const swingSpan = Math.PI * 0.62;
+  const startAngle = cfg.angle - swingSpan * 0.58;
+  const currentAngle = startAngle + swingSpan * Math.max(eased, 0.06);
+  const innerRadius = 11;
+  const outerRadius = 34 + fade * 6;
+  const glowRadius = outerRadius + 10 + fade * 4;
+  const ox = Math.round(sx + cfg.x);
+  const oy = Math.round(sy + cfg.y);
+  const tipX = ox + Math.cos(currentAngle) * (outerRadius + 4);
+  const tipY = oy + Math.sin(currentAngle) * (outerRadius + 4);
+  const midRadius = innerRadius + (outerRadius - innerRadius) * 0.58;
 
   ctx.save();
-  ctx.translate(Math.round(sx + cfg.x), Math.round(sy + cfg.y));
-  ctx.rotate(cfg.rotation);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = `rgba(80, 190, 255, ${0.6 * fade})`;
+  ctx.shadowBlur = 16 + fade * 10;
 
-  const handguard = ctx.createLinearGradient(-8, 0, -1, 0);
-  handguard.addColorStop(0, '#4a2715');
-  handguard.addColorStop(0.55, '#8b5229');
-  handguard.addColorStop(1, '#5b341d');
-  ctx.fillStyle = handguard;
+  const glow = ctx.createRadialGradient(ox, oy, innerRadius * 0.5, ox, oy, glowRadius);
+  glow.addColorStop(0, 'rgba(80,170,255,0)');
+  glow.addColorStop(0.38, `rgba(52,138,255,${0.1 + fade * 0.12})`);
+  glow.addColorStop(0.72, `rgba(70,210,255,${0.22 + fade * 0.22})`);
+  glow.addColorStop(1, 'rgba(70,210,255,0)');
+  ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.moveTo(-8, -4);
-  ctx.lineTo(-2, -3);
-  ctx.lineTo(-1, 3);
-  ctx.lineTo(-8, 4);
+  ctx.arc(ox, oy, glowRadius, startAngle, currentAngle);
+  ctx.arc(ox, oy, innerRadius * 0.45, currentAngle, startAngle, true);
   ctx.closePath();
   ctx.fill();
 
-  const barrel = ctx.createLinearGradient(-1, 0, muzzleX + 2, 0);
-  barrel.addColorStop(0, '#20252a');
-  barrel.addColorStop(0.45, '#7a8189');
-  barrel.addColorStop(1, '#13171c');
-  ctx.fillStyle = barrel;
-  ctx.fillRect(-1, -2.5, barrelLen + 2, 5);
-  ctx.fillStyle = '#15191d';
-  ctx.fillRect(barrelLen - 1, -3.5, 2, 7);
-  ctx.fillRect(barrelLen + 1, -2, 2, 4);
-
-  const smokeA = ctx.createRadialGradient(
-    muzzleX + 5 + progress * 10,
-    -2 + smokeLift,
-    0.5,
-    muzzleX + 5 + progress * 10,
-    -2 + smokeLift,
-    smokeSpread
-  );
-  smokeA.addColorStop(0, `rgba(120,120,120,${0.2 * fade})`);
-  smokeA.addColorStop(0.55, `rgba(120,120,120,${0.12 * fade})`);
-  smokeA.addColorStop(1, 'rgba(120,120,120,0)');
-  ctx.fillStyle = smokeA;
+  const slash = ctx.createRadialGradient(ox, oy, innerRadius, ox, oy, outerRadius);
+  slash.addColorStop(0, `rgba(180,235,255,${0.02 + fade * 0.02})`);
+  slash.addColorStop(0.35, `rgba(104,190,255,${0.32 + fade * 0.22})`);
+  slash.addColorStop(0.75, `rgba(58,132,255,${0.58 + fade * 0.2})`);
+  slash.addColorStop(1, 'rgba(120,220,255,0)');
+  ctx.fillStyle = slash;
   ctx.beginPath();
-  ctx.ellipse(
-    muzzleX + 6 + progress * 9,
-    -2 + smokeLift,
-    smokeSpread,
-    4 + progress * 2.5,
-    0,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-
-  const smokeB = ctx.createRadialGradient(
-    muzzleX + 1 + progress * 6,
-    3 + smokeLift * 0.6,
-    0.5,
-    muzzleX + 1 + progress * 6,
-    3 + smokeLift * 0.6,
-    smokeSpread * 0.75
-  );
-  smokeB.addColorStop(0, `rgba(92,92,92,${0.16 * fade})`);
-  smokeB.addColorStop(0.65, `rgba(120,120,120,${0.08 * fade})`);
-  smokeB.addColorStop(1, 'rgba(120,120,120,0)');
-  ctx.fillStyle = smokeB;
-  ctx.beginPath();
-  ctx.ellipse(
-    muzzleX + 2 + progress * 6,
-    3 + smokeLift * 0.6,
-    smokeSpread * 0.75,
-    3 + progress * 2,
-    0,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-
-  ctx.globalCompositeOperation = 'lighter';
-
-  const flameGlow = ctx.createRadialGradient(
-    muzzleX + 3,
-    0,
-    1,
-    muzzleX + 3,
-    0,
-    flameWidth * 1.9
-  );
-  flameGlow.addColorStop(0, `rgba(255,228,150,${0.48 * fade * flicker})`);
-  flameGlow.addColorStop(0.45, `rgba(255,140,34,${0.24 * fade})`);
-  flameGlow.addColorStop(1, 'rgba(255,110,0,0)');
-  ctx.fillStyle = flameGlow;
-  ctx.beginPath();
-  ctx.ellipse(muzzleX + 3, 0, flameWidth * 1.9, flameWidth * 1.2, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  const flame = ctx.createLinearGradient(muzzleX - 1, 0, muzzleX + flameLen, 0);
-  flame.addColorStop(0, `rgba(255,240,190,${0.55 * fade})`);
-  flame.addColorStop(0.18, `rgba(255,202,104,${0.95 * fade * flicker})`);
-  flame.addColorStop(0.62, `rgba(255,126,24,${0.76 * fade})`);
-  flame.addColorStop(1, 'rgba(255,90,0,0)');
-  ctx.fillStyle = flame;
-  ctx.beginPath();
-  ctx.moveTo(muzzleX - 1, -flameWidth * 0.55);
-  ctx.lineTo(muzzleX + flameLen * 0.25, -flameWidth);
-  ctx.lineTo(muzzleX + flameLen * 0.58, -flameWidth * 0.4);
-  ctx.lineTo(muzzleX + flameLen, 0);
-  ctx.lineTo(muzzleX + flameLen * 0.58, flameWidth * 0.42);
-  ctx.lineTo(muzzleX + flameLen * 0.24, flameWidth * 0.92);
-  ctx.lineTo(muzzleX, flameWidth * 0.42);
+  ctx.arc(ox, oy, outerRadius, startAngle, currentAngle);
+  ctx.arc(ox, oy, innerRadius, currentAngle, startAngle, true);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = `rgba(255,164,52,${0.52 * fade * flicker})`;
+  ctx.strokeStyle = `rgba(165,225,255,${0.42 * fade})`;
+  ctx.lineWidth = 1.8 + fade;
   ctx.beginPath();
-  ctx.moveTo(muzzleX, -0.6);
-  ctx.lineTo(muzzleX + flameLen * 0.56, -flameWidth * 1.18);
-  ctx.lineTo(muzzleX + flameLen * 0.34, -flameWidth * 0.08);
-  ctx.closePath();
-  ctx.fill();
+  ctx.arc(ox, oy, midRadius, startAngle + 0.04, currentAngle - 0.02);
+  ctx.stroke();
 
+  const edge = ctx.createLinearGradient(ox, oy, tipX, tipY);
+  edge.addColorStop(0, `rgba(150,220,255,0)`);
+  edge.addColorStop(0.48, `rgba(112,196,255,${0.45 + fade * 0.15})`);
+  edge.addColorStop(1, `rgba(255,255,255,${0.88 * fade})`);
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = 3 + fade * 2;
   ctx.beginPath();
-  ctx.moveTo(muzzleX, 0.6);
-  ctx.lineTo(muzzleX + flameLen * 0.52, flameWidth * 1.08);
-  ctx.lineTo(muzzleX + flameLen * 0.3, flameWidth * 0.08);
-  ctx.closePath();
-  ctx.fill();
+  ctx.arc(ox, oy, outerRadius - 1, startAngle + 0.02, currentAngle);
+  ctx.stroke();
 
-  const core = ctx.createLinearGradient(muzzleX - 1, 0, muzzleX + coreLen, 0);
-  core.addColorStop(0, `rgba(255,255,255,${0.88 * fade})`);
-  core.addColorStop(0.35, `rgba(255,241,180,${0.98 * fade * flicker})`);
-  core.addColorStop(0.72, `rgba(255,188,72,${0.78 * fade})`);
-  core.addColorStop(1, 'rgba(255,166,40,0)');
-  ctx.fillStyle = core;
+  ctx.strokeStyle = `rgba(230,250,255,${0.82 * fade})`;
+  ctx.lineWidth = 2 + fade * 1.5;
   ctx.beginPath();
-  ctx.moveTo(muzzleX - 1, -2.2);
-  ctx.lineTo(muzzleX + coreLen * 0.36, -1.7);
-  ctx.lineTo(muzzleX + coreLen, 0);
-  ctx.lineTo(muzzleX + coreLen * 0.42, 1.7);
-  ctx.lineTo(muzzleX, 2.2);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = `rgba(255,231,190,${0.54 * fade})`;
-  ctx.fillRect(muzzleX + coreLen * 0.62, -0.5, 2 + fade * 2, 1);
+  ctx.moveTo(
+    ox + Math.cos(currentAngle) * (innerRadius - 1),
+    oy + Math.sin(currentAngle) * (innerRadius - 1)
+  );
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
 
   ctx.restore();
 }
