@@ -33,6 +33,14 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 const T = 32;            // 瓦片尺寸
 const MW = 80, MH = 60; // 地图尺寸（瓦片数）
 const SPEED = 2.4;       // 玩家速度 (像素/帧)
+const REALMS = [
+  { name: '练气期', icon: '🟢', required: 0, maxHP: 3, atk: 1, atkRange: T * 1.5, speedMul: 1.0 },
+  { name: '筑基期', icon: '🔵', required: 50, maxHP: 5, atk: 2, atkRange: T * 1.8, speedMul: 1.1 },
+  { name: '结丹期', icon: '🟣', required: 200, maxHP: 8, atk: 3, atkRange: T * 2.2, speedMul: 1.2 },
+  { name: '元婴期', icon: '🟡', required: 500, maxHP: 12, atk: 5, atkRange: T * 2.5, speedMul: 1.3 },
+  { name: '化神期', icon: '🔴', required: 1500, maxHP: 18, atk: 8, atkRange: T * 3.0, speedMul: 1.4 }
+];
+const REALM_COLORS = ['#5ad45a', '#4c8dff', '#a45cff', '#f0c94d', '#ff5b5b'];
 
 // ─── 画布 ───
 const canvas = document.getElementById('c');
@@ -224,17 +232,22 @@ const player = {
 };
 
 const MAX_PIGS = 9;
-const ATK_RANGE = T * 1.8;
 const ATTACK_COOLDOWN = 300;
 const ATTACK_SWORD_DURATION = 180;
 let killCount = 0;
-let playerHP = 3;
-let maxHP = 3;
+let cultivProgress = 0;
+let currentRealm = 0;
+let playerHP = REALMS[0].maxHP;
+let maxHP = REALMS[0].maxHP;
+let playerSpeedMul = REALMS[0].speedMul;
 let invincible = false;
 let invincibleTimer = 0;
 let gameOver = false;
 let restartButtonRect = null;
 let isAttacking = false;
+let breakthroughText = '';
+let breakthroughColor = REALM_COLORS[0];
+let breakthroughUntil = 0;
 const attackSword = {
   active: false,
   startedAt: 0,
@@ -252,9 +265,41 @@ function updateKillDisplay() {
 }
 
 function updateHP() {
+  const realm = REALMS[currentRealm];
+  const nextRequired = REALMS[currentRealm + 1]?.required ?? '圆满';
   const full = Array.from({ length: playerHP }, () => '<span class="heart">❤️</span>').join('');
   const lost = Array.from({ length: Math.max(0, maxHP - playerHP) }, () => '<span class="heart lost">❤️</span>').join('');
-  hpEl.innerHTML = full + lost;
+  hpEl.innerHTML = full + lost + ' ' + realm.icon + ' ' + realm.name + ' ' + cultivProgress + '/' + nextRequired;
+}
+
+function updateCultivDisplay() {
+  updateHP();
+}
+
+function applyRealmStats(fillHP = false) {
+  const realm = REALMS[currentRealm];
+  maxHP = realm.maxHP;
+  playerSpeedMul = realm.speedMul;
+  playerHP = fillHP ? maxHP : Math.min(playerHP, maxHP);
+  updateHP();
+}
+
+function showBreakthrough() {
+  breakthroughText = REALMS[currentRealm].icon + ' 境界突破！' + REALMS[currentRealm].name;
+  breakthroughColor = REALM_COLORS[currentRealm];
+  breakthroughUntil = performance.now() + 3000;
+}
+
+function gainCultivation(amount = 1) {
+  for (let i = 0; i < amount; i++) {
+    cultivProgress++;
+    if (currentRealm < REALMS.length - 1 && cultivProgress >= REALMS[currentRealm + 1].required) {
+      currentRealm++;
+      applyRealmStats(true);
+      showBreakthrough();
+    }
+  }
+  updateCultivDisplay();
 }
 
 function beginPigChase(pig) {
@@ -331,23 +376,29 @@ function performAttack() {
   attackSword.active = true;
   attackSword.startedAt = performance.now();
   attackSword.dir = player.dir;
+  const attackRange = REALMS[currentRealm].atkRange;
+  const attackDamage = REALMS[currentRealm].atk;
   setTimeout(() => {
     isAttacking = false;
   }, ATTACK_COOLDOWN);
 
   for (let i = pigs.length - 1; i >= 0; i--) {
     const pig = pigs[i];
-    if (Math.hypot(pig.x - player.x, pig.y - player.y) > ATK_RANGE) continue;
+    if (Math.hypot(pig.x - player.x, pig.y - player.y) > attackRange) continue;
+    pig.hp = (pig.hp ?? 1) - attackDamage;
+    if (pig.hp > 0) continue;
     pig.alive = false;
     pigs.splice(i, 1);
     killCount++;
+    gainCultivation();
   }
 
   updateKillDisplay();
 }
 
+applyRealmStats(true);
 updateKillDisplay();
-updateHP();
+updateCultivDisplay();
 
 function drawAttackSword(sx, sy) {
   if (!attackSword.active) return;
@@ -901,6 +952,22 @@ function drawParticles() {
   ctx.globalAlpha = 1;
 }
 
+function drawBreakthroughOverlay() {
+  if (!breakthroughText || performance.now() > breakthroughUntil) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 36px monospace';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.strokeText(breakthroughText, canvas.width / 2, canvas.height / 2);
+  ctx.fillStyle = breakthroughColor;
+  ctx.fillText(breakthroughText, canvas.width / 2, canvas.height / 2);
+  ctx.restore();
+}
+
 // ─── 主循环 ───
 function update() {
   if (gameOver) return;
@@ -915,8 +982,8 @@ function update() {
   // 归一化
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len > 0.1) {
-    dx = (dx / len) * SPEED;
-    dy = (dy / len) * SPEED;
+    dx = (dx / len) * SPEED * playerSpeedMul;
+    dy = (dy / len) * SPEED * playerSpeedMul;
     player.moving = true;
 
     // 朝向
@@ -1024,6 +1091,7 @@ function render() {
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  drawBreakthroughOverlay();
   if (gameOver) drawGameOverOverlay();
 }
 
