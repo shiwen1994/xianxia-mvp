@@ -232,6 +232,7 @@ const player = {
 };
 
 const MAX_PIGS = 9;
+const PIG_MAX_HP = 3;
 const ATTACK_COOLDOWN = 300;
 const ATTACK_SWORD_DURATION = 180;
 let killCount = 0;
@@ -385,7 +386,7 @@ function performAttack() {
   for (let i = pigs.length - 1; i >= 0; i--) {
     const pig = pigs[i];
     if (Math.hypot(pig.x - player.x, pig.y - player.y) > attackRange) continue;
-    pig.hp = (pig.hp ?? 1) - attackDamage;
+    pig.hp -= attackDamage;
     if (pig.hp > 0) continue;
     pig.alive = false;
     pigs.splice(i, 1);
@@ -677,6 +678,7 @@ function spawnPig() {
     const pig = {
       x,
       y,
+      hp: PIG_MAX_HP,
       vx: 0,
       vy: 0,
       face: Math.random() < 0.5 ? -1 : 1,
