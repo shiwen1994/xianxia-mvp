@@ -12,20 +12,12 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 #joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
 #info{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
 </style>
-#atb{position:fixed;right:16px;bottom:40%;width:64px;height:64px;border-radius:50%;background:rgba(80,30,30,0.85);border:3px solid #cc4444;color:#fff;font:bold 13px monospace;z-index:50;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 12px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.2}
-#atb:active{background:rgba(180,40,40,0.9);transform:scale(0.93)}
-#atb-hint{font-size:10px;opacity:0.7}
-#kills{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
-</style>
-<div id="kills">击杀 0</div><button id="atb"><span>攻击</span><span id="atb-hint">SPACE</span></button>
-
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="joystick-zone"></div>
 <div id="info">灵墟秘境</div>
 <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
-
 <script>
 // ─── 常量 ───
 const T = 32;            // 瓦片尺寸
@@ -301,7 +293,7 @@ const input = { dx: 0, dy: 0 };
 
 // 键盘
 const keys = {};
-document.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ') { e.preventDefault(); performAttack(); } e.preventDefault(); });
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
 // 虚拟摇杆
@@ -316,7 +308,7 @@ nipplejs.create({
     const a = data.angle.radian;
     const f = Math.min(data.force, 1);
     input.dx = Math.cos(a) * f;
-    input.dy = -Math.sin(a) * f;
+    input.dy = Math.sin(a) * f;
   }
 }).on('end', () => {
   input.dx = 0;
@@ -324,79 +316,6 @@ nipplejs.create({
 });
 
 // ─── 粒子系统（灵力微光）───
-
-// ── 战斗系统 ──
-let killCount = 0;
-const ATK_RANGE = T * 1.8;
-let isAttacking = false;
-const MAX_PIGS = 5;
-const PIG_SPAWN_MARGIN = 12;
-const pigs = [];
-
-function isSolidPig(tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= MW || ty >= MH) return true;
-  return !!TILE_SOLID[map[ty][tx]];
-}
-
-function spawnPig() {
-  if (pigs.length >= MAX_PIGS) return;
-  const sx2 = Math.floor(MW / 2), sy2 = Math.floor(MH / 2);
-  let tx, ty, tries = 0;
-  do {
-    tx = Math.floor(Math.random() * (MW - 4)) + 2;
-    ty = Math.floor(Math.random() * (MH - 4)) + 2;
-    tries++;
-  } while (((Math.abs(tx - sx2) < PIG_SPAWN_MARGIN || Math.abs(ty - sy2) < PIG_SPAWN_MARGIN) || isSolidPig(tx, ty)) && tries < 50);
-  if (tries >= 50) return;
-  pigs.push({ x: tx * T + T / 2, y: ty * T + T / 2, dir: Math.floor(Math.random() * 4), moveTimer: 0, alive: true });
-}
-
-function updatePigs() {
-  for (const p of pigs) {
-    if (!p.alive) continue;
-    p.moveTimer++;
-    if (p.moveTimer > 20 + Math.random() * 30) { p.dir = Math.floor(Math.random() * 4); p.moveTimer = 0; }
-    let nx = p.x, ny = p.y;
-    if (p.dir === 0) ny += 0.8; else if (p.dir === 1) nx -= 0.8; else if (p.dir === 2) ny -= 0.8; else nx += 0.8;
-    if (!isSolidPig(Math.floor(nx / T), Math.floor(ny / T))) { p.x = nx; p.y = ny; }
-    p.x = Math.max(T, Math.min((MW - 1) * T, p.x));
-    p.y = Math.max(T, Math.min((MH - 1) * T, p.y));
-  }
-  while (pigs.length < MAX_PIGS) spawnPig();
-}
-
-function drawPig(sx, sy, p) {
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath(); ctx.ellipse(sx, sy + 8, 9, 4, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#6a3a2a'; ctx.fillRect(sx - 8, sy - 8, 16, 14);
-  ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 7, sy - 7, 14, 11);
-  ctx.fillStyle = '#3a1a0a'; ctx.fillRect(sx - 3, sy - 12, 2, 5); ctx.fillRect(sx - 1, sy - 13, 2, 6); ctx.fillRect(sx + 1, sy - 12, 2, 5);
-  ctx.fillStyle = '#6a3a2a'; ctx.fillRect(sx - 5, sy - 14, 10, 8); ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 4, sy - 13, 8, 6);
-  ctx.fillStyle = '#4a2a1a'; ctx.fillRect(sx - 3, sy - 10, 6, 4);
-  ctx.fillStyle = '#e8e0c0'; ctx.fillRect(sx - 4, sy - 8, 2, 3); ctx.fillRect(sx + 2, sy - 8, 2, 3);
-  ctx.fillStyle = '#1a0a00';
-  const eo = p.dir === 1 ? -1 : p.dir === 3 ? 1 : 0;
-  ctx.fillRect(sx - 3 + eo, sy - 12, 2, 2); ctx.fillRect(sx + 1 + eo, sy - 12, 2, 2);
-  ctx.fillStyle = '#5a2a1a'; ctx.fillRect(sx - 7, sy + 5, 3, 5); ctx.fillRect(sx + 4, sy + 5, 3, 5);
-}
-
-function performAttack() {
-  if (isAttacking) return;
-  isAttacking = true;
-  setTimeout(() => { isAttacking = false; }, 300);
-  let hits = 0;
-  for (const p of pigs) {
-    if (!p.alive) continue;
-    const dx = player.x - p.x, dy = player.y - p.y;
-    if (Math.sqrt(dx * dx + dy * dy) < ATK_RANGE) { p.alive = false; hits++; }
-  }
-  killCount += hits;
-  const el = document.getElementById('kills');
-  if (el) el.textContent = '击杀 ' + killCount;
-}
-
-document.getElementById('atb').addEventListener('touchstart', e => { e.preventDefault(); performAttack(); }, { passive: false });
-document.getElementById('atb').addEventListener('mousedown', e => { e.preventDefault(); performAttack(); });
 const particles = [];
 for (let i = 0; i < 30; i++) {
   particles.push({
@@ -457,7 +376,6 @@ function update() {
   } else {
     player.moving = false;
   }
-  updatePigs();
 }
 
 function render() {
@@ -488,12 +406,6 @@ function render() {
   drawParticles();
 
   // 绘制玩家
-  // 野猪
-  for (const p of pigs) {
-    if (!p.alive) continue;
-    const px2 = Math.round(p.x - cam.x), py2 = Math.round(p.y - cam.y);
-    if (px2 > -T * 2 && px2 < canvas.width + T * 2 && py2 > -T * 2 && py2 < canvas.height + T * 2) drawPig(px2, py2, p);
-  }
   const px = Math.round(player.x - cam.x);
   const py = Math.round(player.y - cam.y);
   drawPlayer(px, py);
@@ -516,7 +428,6 @@ function loop() {
 }
 
 loop();
-
 </script>
 </body>
 </html>
