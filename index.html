@@ -10,9 +10,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 #joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
 #info{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
+
+#atb{position:fixed;right:16px;bottom:16px;width:64px;height:64px;border-radius:50%;background:rgba(80,30,30,0.85);border:3px solid #cc4444;color:#fff;font:bold 13px monospace;z-index:50;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 12px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.2}
+#atb:active{background:rgba(180,40,40,0.9);transform:scale(0.93)}
+#atb-hint{font-size:10px;opacity:0.7}
+#kills{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
 </style>
 </head>
 <body>
+<div id="kills">击杀 0</div><button id="atb"><span>攻击</span><span id="atb-hint">SPACE</span></button>
 <canvas id="c"></canvas>
 <div id="joystick-zone"></div>
 <div id="info">灵墟秘境</div>
@@ -86,6 +92,9 @@ function genMap() {
 }
 genMap();
 
+// 初始野猪
+for (let i = 0; i < MAX_PIGS; i++) spawnPig();
+
 const player = {
   x: Math.floor(MW / 2) * T + T / 2,
   y: Math.floor(MH / 2) * T + T / 2,
@@ -118,7 +127,7 @@ function canMove(nx, ny) {
 
 const input = { dx: 0, dy: 0 };
 const keys = {};
-document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ') { e.preventDefault(); performAttack(); } e.preventDefault(); });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 nipplejs.create({
   zone: document.getElementById('joystick-zone'),
@@ -129,6 +138,129 @@ nipplejs.create({
     input.dy = -Math.sin(data.angle.radian) * Math.min(data.force, 1);
   }
 }).on('end', () => { input.dx = 0; input.dy = 0; });
+
+
+// ── 战斗系统 ──
+let killCount = 0;
+const ATK_RANGE = T * 1.8;
+let isAttacking = false;
+let attackFlash = 0;
+const MAX_PIGS = 5;
+const PIG_SPAWN_MARGIN = 12; // 出生点周围多少格内不刷
+
+// 野猪数据
+const pigs = [];
+function spawnPig() {
+  if (pigs.length >= MAX_PIGS) return;
+  const sx2 = Math.floor(MW / 2), sy2 = Math.floor(MH / 2);
+  let tx, ty, tries = 0;
+  do {
+    tx = Math.floor(Math.random() * (MW - 4)) + 2;
+    ty = Math.floor(Math.random() * (MH - 4)) + 2;
+    tries++;
+  } while ((Math.abs(tx - sx2) < PIG_SPAWN_MARGIN && Math.abs(ty - sy2) < PIG_SPAWN_MARGIN || isSolidPig(tx, ty)) && tries < 50);
+  if (tries >= 50) return;
+  pigs.push({
+    x: tx * T + T / 2,
+    y: ty * T + T / 2,
+    dir: Math.floor(Math.random() * 4),
+    moveTimer: 0,
+    alive: true
+  });
+}
+
+function isSolidPig(tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= MW || ty >= MH) return true;
+  return !!TILE_SOLID[map[ty][tx]];
+}
+
+function updatePigs() {
+  for (const p of pigs) {
+    if (!p.alive) continue;
+    p.moveTimer++;
+    if (p.moveTimer > 20 + Math.random() * 30) {
+      p.dir = Math.floor(Math.random() * 4);
+      p.moveTimer = 0;
+    }
+    let spd = 0.8;
+    let nx = p.x, ny = p.y;
+    if (p.dir === 0) ny += spd;
+    else if (p.dir === 1) nx -= spd;
+    else if (p.dir === 2) ny -= spd;
+    else nx += spd;
+    if (!isSolidPig(Math.floor(nx / T), Math.floor(ny / T))) {
+      p.x = nx; p.y = ny;
+    } else {
+      p.dir = (p.dir + 2) % 4;
+    }
+    p.x = Math.max(T, Math.min((MW - 1) * T, p.x));
+    p.y = Math.max(T, Math.min((MH - 1) * T, p.y));
+  }
+  // 保持数量
+  while (pigs.length < MAX_PIGS) spawnPig();
+}
+
+function drawPig(sx, sy, p) {
+  const t = Date.now();
+  // 阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(sx, sy + 8, 9, 4, 0, 0, Math.PI * 2); ctx.fill();
+  // 身体
+  ctx.fillStyle = '#6a3a2a'; ctx.fillRect(sx - 8, sy - 8, 16, 14);
+  ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 7, sy - 7, 14, 11);
+  // 鬃毛
+  ctx.fillStyle = '#3a1a0a';
+  ctx.fillRect(sx - 3, sy - 12, 2, 5);
+  ctx.fillRect(sx - 1, sy - 13, 2, 6);
+  ctx.fillRect(sx + 1, sy - 12, 2, 5);
+  // 头
+  ctx.fillStyle = '#6a3a2a'; ctx.fillRect(sx - 5, sy - 14, 10, 8);
+  ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 4, sy - 13, 8, 6);
+  // 鼻子
+  ctx.fillStyle = '#4a2a1a'; ctx.fillRect(sx - 3, sy - 10, 6, 4);
+  ctx.fillStyle = '#3a1a0a'; ctx.fillRect(sx - 2, sy - 9, 2, 2);
+  ctx.fillRect(sx + 1, sy - 9, 2, 2);
+  // 獠牙
+  ctx.fillStyle = '#e8e0c0';
+  ctx.fillRect(sx - 4, sy - 8, 2, 3);
+  ctx.fillRect(sx + 2, sy - 8, 2, 3);
+  // 眼睛
+  ctx.fillStyle = '#1a0a00';
+  const eyeOff = p.dir === 1 ? -1 : p.dir === 3 ? 1 : 0;
+  ctx.fillRect(sx - 3 + eyeOff, sy - 12, 2, 2);
+  ctx.fillRect(sx + 1 + eyeOff, sy - 12, 2, 2);
+  // 腿
+  ctx.fillStyle = '#5a2a1a';
+  ctx.fillRect(sx - 7, sy + 5, 3, 5);
+  ctx.fillRect(sx + 4, sy + 5, 3, 5);
+}
+
+function performAttack() {
+  if (isAttacking) return;
+  isAttacking = true;
+  attackFlash = 8;
+  setTimeout(() => { isAttacking = false; }, 300);
+  let hits = 0;
+  for (const p of pigs) {
+    if (!p.alive) continue;
+    const dx = player.x - p.x, dy = player.y - p.y;
+    if (Math.sqrt(dx * dx + dy * dy) < ATK_RANGE) {
+      p.alive = false;
+      hits++;
+    }
+  }
+  killCount += hits;
+  const killEl = document.getElementById('kills');
+  if (killEl) killEl.textContent = '击杀 ' + killCount;
+}
+
+
+// 攻击按钮
+const atb = document.getElementById('atb');
+if (atb) {
+  atb.addEventListener('touchstart', e => { e.preventDefault(); performAttack(); }, { passive: false });
+  atb.addEventListener('mousedown', e => { e.preventDefault(); performAttack(); });
+}
 
 const particles = [];
 for (let i = 0; i < 30; i++) {
@@ -407,6 +539,8 @@ function update() {
     player.moving = false;
   }
 }
+  updatePigs();
+
 
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -426,11 +560,23 @@ function render() {
 
   drawParticles();
 
+  // 野猪
+  for (const p of pigs) {
+    if (!p.alive) continue;
+    const px = Math.round(p.x - cam.x), py = Math.round(p.y - cam.y);
+    if (px > -T * 2 && px < canvas.width + T * 2 && py > -T * 2 && py < canvas.height + T * 2) {
+      drawPig(px, py, p);
+    }
+  }
+  // 攻击闪光
+  if (attackFlash > 0) {
+    ctx.fillStyle = 'rgba(200,100,100,' + (attackFlash / 16) + ')';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    attackFlash--;
+  }
   const px = Math.round(player.x - cam.x);
   const py = Math.round(player.y - cam.y);
-  drawPlayer(px, py);
-
-  // 暗角
+  drawPlayer(px, py);  // 暗角
   const grd = ctx.createRadialGradient(
     canvas.width / 2, canvas.height / 2, canvas.width * 0.3,
     canvas.width / 2, canvas.height / 2, canvas.width * 0.75
