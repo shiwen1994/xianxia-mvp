@@ -308,7 +308,7 @@ nipplejs.create({
     const a = data.angle.radian;
     const f = Math.min(data.force, 1);
     input.dx = Math.cos(a) * f;
-    input.dy = Math.sin(a) * f;
+    input.dy = -Math.sin(a) * f;
   }
 }).on('end', () => {
   input.dx = 0;
