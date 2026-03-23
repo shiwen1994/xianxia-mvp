@@ -200,61 +200,334 @@ function drawTile(sx, sy, type, tx, ty) {
 }
 
 // ─── 玩家 ───
+const SPAWN_TX = Math.floor(MW / 2);
+const SPAWN_TY = Math.floor(MH / 2);
+const SPAWN_X = SPAWN_TX * T + T / 2;
+const SPAWN_Y = SPAWN_TY * T + T / 2;
+
 const player = {
-  x: Math.floor(MW / 2) * T + T / 2,
-  y: Math.floor(MH / 2) * T + T / 2,
+  x: SPAWN_X,
+  y: SPAWN_Y,
   dir: 0,    // 0=下,1=左,2=上,3=右
   frame: 0,
   moving: false
 };
 
+const MAX_PIGS = 3;
+const pigs = [];
+
 function drawPlayer(sx, sy) {
-  const bob = player.moving ? Math.sin(Date.now() / 120) * 2 : 0;
-  const py = sy + bob;
+  const bob = player.moving ? Math.sin(Date.now() / 120) * 1.5 : 0;
+  const px = Math.round(sx);
+  const py = Math.round(sy + bob);
 
-  // 阴影
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(sx - 6, sy + 12, 14, 4);
-
-  // 身体 - 修仙长袍
-  ctx.fillStyle = '#3a4a5a';
-  ctx.fillRect(sx - 6, py - 4, 12, 16);
-
-  // 腰带
-  ctx.fillStyle = '#6a5a3a';
-  ctx.fillRect(sx - 6, py + 2, 12, 2);
-
-  // 头
-  ctx.fillStyle = '#d4b896';
-  ctx.fillRect(sx - 4, py - 10, 8, 7);
-
-  // 头发（长发/发髻风格）
-  ctx.fillStyle = '#1a1a2a';
-  ctx.fillRect(sx - 5, py - 12, 10, 4);
-  if (player.dir !== 2) { // 非背面
-    ctx.fillRect(sx - 5, py - 8, 2, 6);
-    ctx.fillRect(sx + 3, py - 8, 2, 6);
-  }
-
-  // 发光灵力效果（移动时）
+  // 移动时的淡蓝灵力光晕
   if (player.moving) {
-    ctx.fillStyle = `rgba(100,180,255,${0.15 + Math.sin(Date.now() / 200) * 0.1})`;
-    ctx.fillRect(sx - 8, py - 14, 18, 26);
+    const aura = ctx.createRadialGradient(px, py + 1, 2, px, py + 2, 16);
+    aura.addColorStop(0, 'rgba(200,235,255,0.24)');
+    aura.addColorStop(0.55, 'rgba(120,190,255,0.18)');
+    aura.addColorStop(1, 'rgba(120,190,255,0)');
+    ctx.fillStyle = aura;
+    ctx.fillRect(px - 16, py - 16, 32, 32);
   }
 
-  // 眼睛（非背面时）
+  // 椭圆阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(px, Math.round(sy + 12), 8, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 袖子会随朝向变化
+  const sleeveBase = '#2659ab';
+  const sleeveLight = '#6ea4f0';
+  if (player.dir === 0) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 10, py - 1, 4, 7);
+    ctx.fillRect(px + 6, py - 1, 4, 7);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 9, py, 2, 4);
+    ctx.fillRect(px + 7, py, 2, 4);
+  } else if (player.dir === 2) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 9, py, 3, 6);
+    ctx.fillRect(px + 6, py, 3, 6);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 8, py + 1, 1, 3);
+    ctx.fillRect(px + 7, py + 1, 1, 3);
+  } else if (player.dir === 1) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 11, py, 5, 7);
+    ctx.fillRect(px + 5, py + 1, 3, 5);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 9, py + 1, 2, 4);
+    ctx.fillRect(px + 6, py + 2, 1, 2);
+  } else {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 8, py + 1, 3, 5);
+    ctx.fillRect(px + 6, py, 5, 7);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 7, py + 2, 1, 2);
+    ctx.fillRect(px + 7, py + 1, 2, 4);
+  }
+
+  // 长袍主体：蓝白渐变
+  const robeGrad = ctx.createLinearGradient(px, py - 4, px, py + 11);
+  robeGrad.addColorStop(0, '#173c82');
+  robeGrad.addColorStop(0.62, '#4e84d8');
+  robeGrad.addColorStop(1, '#f2f7ff');
+  ctx.fillStyle = robeGrad;
+  ctx.fillRect(px - 5, py - 4, 10, 6);
+  ctx.fillRect(px - 6, py + 1, 12, 4);
+  ctx.fillRect(px - 7, py + 4, 14, 2);
+
+  // 内衫与衣襟
+  ctx.fillStyle = '#edf4ff';
+  ctx.fillRect(px - 2, py - 4, 4, 3);
+  ctx.fillStyle = '#b7cdf4';
+  ctx.fillRect(px - 1, py - 1, 2, 4);
+
+  // 多层衣摆
+  ctx.fillStyle = '#183f86';
+  ctx.fillRect(px - 7, py + 5, 14, 2);
+  ctx.fillStyle = '#4d83d5';
+  ctx.fillRect(px - 8, py + 7, 16, 2);
+  ctx.fillStyle = '#f4f8ff';
+  ctx.fillRect(px - 6, py + 9, 12, 2);
+
+  // 腰带：蓝白细腰带
+  ctx.fillStyle = '#eff5ff';
+  ctx.fillRect(px - 5, py + 3, 10, 1);
+  ctx.fillStyle = '#4f7fd8';
+  ctx.fillRect(px - 4, py + 4, 8, 1);
+
+  // 鞋尖
+  ctx.fillStyle = '#dde8fa';
+  ctx.fillRect(px - 3, py + 11, 2, 1);
+  ctx.fillRect(px + 1, py + 11, 2, 1);
+
+  // 头部
+  ctx.fillStyle = '#dcc4a4';
+  ctx.fillRect(px - 4, py - 12, 8, 8);
+
+  // 发带与光泽
+  ctx.fillStyle = '#2d66c6';
+  ctx.fillRect(px - 4, py - 11, 8, 2);
+  ctx.fillStyle = '#a9dfff';
+  ctx.fillRect(px - 2, py - 11, 4, 1);
+
+  // 黑发：分层刘海 + 鬓角
+  ctx.fillStyle = '#10131b';
+  ctx.fillRect(px - 5, py - 13, 10, 3);
+  ctx.fillRect(px - 4, py - 10, 2, 3);
+  ctx.fillRect(px - 1, py - 10, 2, 4);
+  ctx.fillRect(px + 2, py - 10, 2, 3);
+  if (player.dir === 2) {
+    ctx.fillRect(px - 5, py - 9, 10, 6);
+    ctx.fillRect(px - 4, py - 3, 8, 4);
+  } else {
+    ctx.fillRect(px - 5, py - 8, 2, 7);
+    ctx.fillRect(px + 3, py - 8, 2, 7);
+  }
+
+  // 眼睛：蓝色瞳孔 + 白色高光
   if (player.dir !== 2) {
-    ctx.fillStyle = '#a0c0ff';
-    if (player.dir === 0) { // 朝下
-      ctx.fillRect(sx - 3, py - 6, 2, 2);
-      ctx.fillRect(sx + 1, py - 6, 2, 2);
-    } else if (player.dir === 1) { // 朝左
-      ctx.fillRect(sx - 3, py - 6, 2, 2);
-      ctx.fillRect(sx - 1, py - 6, 2, 2);
-    } else { // 朝右
-      ctx.fillRect(sx - 1, py - 6, 2, 2);
-      ctx.fillRect(sx + 1, py - 6, 2, 2);
+    ctx.fillStyle = '#4c88e6';
+    if (player.dir === 0) {
+      ctx.fillRect(px - 3, py - 7, 2, 2);
+      ctx.fillRect(px + 1, py - 7, 2, 2);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px - 3, py - 7, 1, 1);
+      ctx.fillRect(px + 1, py - 7, 1, 1);
+    } else if (player.dir === 1) {
+      ctx.fillRect(px - 3, py - 7, 2, 2);
+      ctx.fillRect(px - 1, py - 7, 1, 1);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px - 3, py - 7, 1, 1);
+    } else {
+      ctx.fillRect(px, py - 7, 1, 1);
+      ctx.fillRect(px + 2, py - 7, 2, 2);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px + 2, py - 7, 1, 1);
     }
+  }
+}
+
+function canPigMove(nx, ny) {
+  const hw = 8, hh = 5;
+  return !isSolid(nx - hw, ny - hh) &&
+         !isSolid(nx + hw, ny - hh) &&
+         !isSolid(nx - hw, ny + hh) &&
+         !isSolid(nx + hw, ny + hh);
+}
+
+function choosePigDirection(pig, forced = false) {
+  const dirs = [
+    { vx: 1, vy: 0 },
+    { vx: -1, vy: 0 },
+    { vx: 0, vy: 1 },
+    { vx: 0, vy: -1 },
+    { vx: 0.7, vy: 0.7 },
+    { vx: -0.7, vy: 0.7 },
+    { vx: 0.7, vy: -0.7 },
+    { vx: -0.7, vy: -0.7 },
+    { vx: 0, vy: 0 }
+  ];
+  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+  pig.vx = dir.vx;
+  pig.vy = dir.vy;
+  if (dir.vx !== 0) pig.face = dir.vx > 0 ? 1 : -1;
+  pig.stepTimer = (forced ? 12 : 28) + Math.random() * (forced ? 18 : 72);
+}
+
+function spawnPig() {
+  for (let i = 0; i < 80; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = (12 + Math.random() * 8) * T;
+    const x = SPAWN_X + Math.cos(angle) * radius;
+    const y = SPAWN_Y + Math.sin(angle) * radius;
+
+    if (x < T || y < T || x > (MW - 1) * T || y > (MH - 1) * T) continue;
+    if (Math.hypot(x - SPAWN_X, y - SPAWN_Y) / T < 12) continue;
+    if (!canPigMove(x, y)) continue;
+
+    let overlap = false;
+    for (const other of pigs) {
+      if (Math.hypot(other.x - x, other.y - y) < T * 1.5) {
+        overlap = true;
+        break;
+      }
+    }
+    if (overlap) continue;
+
+    const pig = {
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      face: Math.random() < 0.5 ? -1 : 1,
+      speed: 0.45 + Math.random() * 0.35,
+      stepTimer: 0,
+      phase: Math.random() * Math.PI * 2
+    };
+    choosePigDirection(pig);
+    pigs.push(pig);
+    return pig;
+  }
+  return null;
+}
+
+function updatePigs() {
+  while (pigs.length < MAX_PIGS) {
+    if (!spawnPig()) break;
+  }
+
+  for (let i = pigs.length - 1; i >= 0; i--) {
+    const pig = pigs[i];
+
+    if (pig.x < 0 || pig.y < 0 || pig.x > MW * T || pig.y > MH * T) {
+      pigs.splice(i, 1);
+      spawnPig();
+      continue;
+    }
+
+    pig.stepTimer--;
+    if (pig.stepTimer <= 0) choosePigDirection(pig);
+
+    if (pig.vx === 0 && pig.vy === 0) continue;
+
+    const mx = pig.vx * pig.speed;
+    const my = pig.vy * pig.speed;
+    let moved = false;
+
+    if (canPigMove(pig.x + mx, pig.y)) {
+      pig.x += mx;
+      moved = true;
+    }
+    if (canPigMove(pig.x, pig.y + my)) {
+      pig.y += my;
+      moved = true;
+    }
+
+    if (!moved) {
+      choosePigDirection(pig, true);
+    } else if (Math.abs(mx) > 0.05) {
+      pig.face = mx > 0 ? 1 : -1;
+    }
+
+    if (pig.x < T || pig.y < T || pig.x > (MW - 1) * T || pig.y > (MH - 1) * T) {
+      pigs.splice(i, 1);
+      spawnPig();
+    }
+  }
+}
+
+function drawPig(sx, sy, pig = null) {
+  const face = pig ? pig.face : 1;
+  const walk = pig && (pig.vx !== 0 || pig.vy !== 0) ? Math.sin(Date.now() / 110 + pig.phase) : 0;
+  const legA = Math.max(0, Math.round(walk * 2));
+  const legB = Math.max(0, Math.round(-walk * 2));
+
+  ctx.save();
+  ctx.translate(Math.round(sx), Math.round(sy));
+  ctx.scale(face, 1);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 13, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 腿
+  ctx.fillStyle = '#3b2416';
+  ctx.fillRect(-7, 7, 2, 5 + legA);
+  ctx.fillRect(-2, 7, 2, 5 + legB);
+  ctx.fillRect(3, 7, 2, 5 + legB);
+  ctx.fillRect(7, 7, 2, 5 + legA);
+
+  // 鬃毛
+  ctx.fillStyle = '#352012';
+  ctx.fillRect(-8, -8, 11, 3);
+  ctx.fillRect(-2, -10, 4, 2);
+
+  // 身体
+  ctx.fillStyle = '#6b4427';
+  ctx.fillRect(-10, -6, 19, 10);
+  ctx.fillRect(-8, 4, 15, 4);
+  ctx.fillStyle = '#8a5a35';
+  ctx.fillRect(-8, -4, 13, 6);
+  ctx.fillRect(-5, 4, 8, 2);
+
+  // 猪头
+  ctx.fillStyle = '#72492a';
+  ctx.fillRect(7, -4, 8, 8);
+  ctx.fillStyle = '#96623c';
+  ctx.fillRect(10, -2, 6, 6);
+  ctx.fillStyle = '#b07b55';
+  ctx.fillRect(12, 0, 5, 4);
+
+  // 面部细节与獠牙
+  ctx.fillStyle = '#1c120b';
+  ctx.fillRect(11, -1, 1, 1);
+  ctx.fillRect(15, 1, 1, 1);
+  ctx.fillRect(15, 3, 1, 1);
+  ctx.fillStyle = '#efe5d6';
+  ctx.fillRect(13, 4, 2, 1);
+  ctx.fillRect(14, 5, 2, 1);
+
+  // 耳朵与尾巴
+  ctx.fillStyle = '#4a2d19';
+  ctx.fillRect(9, -6, 3, 2);
+  ctx.fillRect(-12, -1, 2, 1);
+
+  ctx.restore();
+}
+
+function drawPigs() {
+  const ordered = pigs.slice().sort((a, b) => a.y - b.y);
+  for (const pig of ordered) {
+    const sx = Math.round(pig.x - cam.x);
+    const sy = Math.round(pig.y - cam.y);
+    if (sx < -32 || sx > canvas.width + 32 || sy < -32 || sy > canvas.height + 32) continue;
+    drawPig(sx, sy, pig);
   }
 }
 
@@ -376,6 +649,8 @@ function update() {
   } else {
     player.moving = false;
   }
+
+  updatePigs();
 }
 
 function render() {
@@ -404,6 +679,9 @@ function render() {
 
   // 绘制粒子
   drawParticles();
+
+  // 绘制野猪
+  drawPigs();
 
   // 绘制玩家
   const px = Math.round(player.x - cam.x);
