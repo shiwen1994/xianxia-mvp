@@ -6,16 +6,14 @@
 <title>仙侠 · MVP</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{position:fixed;top:0;left:0;right:0;bottom:0;overflow:hidden;background:#0a0e0a;touch-action:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action:none}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 #ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 #joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
-#kills{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
 #info{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
 </style>
 </head>
 <body>
-<div id="kills">击杀 0</div>
 <canvas id="c"></canvas>
 <div id="joystick-zone"></div>
 <div id="info">灵墟秘境</div>
@@ -114,7 +112,6 @@ function genMap() {
     }
 }
 genMap();
-for (let i = 0; i < MAX_PIGS; i++) spawnPig();
 
 // ─── 瓦片颜色 ───
 const PALETTE = {
@@ -201,81 +198,6 @@ function drawTile(sx, sy, type, tx, ty) {
     ctx.fillRect(fx + 1, fy + 1, 1, 1);
   }
 }
-
-// ─── 野猪 ───
-let killCount = 0;
-const pigs = [];
-const MAX_PIGS = 3;
-
-function isSolidPig(tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= MW || ty >= MH) return true;
-  return !!TILE_SOLID[map[ty][tx]];
-}
-
-function spawnPig() {
-  if (pigs.length >= MAX_PIGS) return;
-  let tx, ty, tries = 0;
-  do {
-    tx = Math.floor(Math.random() * (MW - 4)) + 2;
-    ty = Math.floor(Math.random() * (MH - 4)) + 2;
-    tries++;
-  } while (isSolidPig(tx, ty) && tries < 30);
-  if (tries >= 30) return;
-  pigs.push({ x: tx * T + T / 2, y: ty * T + T / 2, dir: Math.floor(Math.random() * 4), moveTimer: 0 });
-}
-
-function updatePigs() {
-  // 确保数量
-  while (pigs.length < MAX_PIGS) spawnPig();
-  for (const p of pigs) {
-    p.moveTimer++;
-    if (p.moveTimer > 15 + Math.random() * 20) {
-      p.dir = Math.floor(Math.random() * 4);
-      p.moveTimer = 0;
-    }
-    let nx = p.x, ny = p.y;
-    if (p.dir === 0) ny += 1.0;
-    else if (p.dir === 1) nx -= 1.0;
-    else if (p.dir === 2) ny -= 1.0;
-    else nx += 1.0;
-    if (!isSolidPig(Math.floor(nx / T), Math.floor(ny / T))) {
-      p.x = nx; p.y = ny;
-    } else {
-      p.dir = (p.dir + 2) % 4;
-    }
-    // 超出世界边界就删除让它重新生成
-    if (p.x < T || p.x > (MW - 1) * T || p.y < T || p.y > (MH - 1) * T) {
-      p.x = -999; // 标记为待删除
-    }
-  }
-  // 删除出界的猪，重新生成
-  for (let i = pigs.length - 1; i >= 0; i--) {
-    if (pigs[i].x < 0) pigs.splice(i, 1);
-  }
-  while (pigs.length < MAX_PIGS) spawnPig();
-}
-
-function drawPig(sx, sy, p) {
-  // 阴影
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(sx - 6, sy + 8, 14, 4);
-  // 身体
-  ctx.fillStyle = '#6a3a2a'; ctx.fillRect(sx - 7, sy - 4, 14, 12);
-  ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 6, sy - 3, 12, 10);
-  // 猪头
-  ctx.fillStyle = '#7a4a3a'; ctx.fillRect(sx - 5, sy - 10, 10, 7);
-  ctx.fillStyle = '#8a5a4a'; ctx.fillRect(sx - 4, sy - 9, 8, 5);
-  // 鼻子
-  ctx.fillStyle = '#5a2a1a'; ctx.fillRect(sx - 3, sy - 7, 6, 4);
-  // 獠牙
-  ctx.fillStyle = '#e8e0b0'; ctx.fillRect(sx - 4, sy - 7, 2, 3); ctx.fillRect(sx + 2, sy - 7, 2, 3);
-  // 鬃毛
-  ctx.fillStyle = '#3a1a0a';
-  ctx.fillRect(sx - 2, sy - 13, 2, 4); ctx.fillRect(sx, sy - 14, 2, 5); ctx.fillRect(sx + 2, sy - 13, 2, 4);
-  // 腿
-  ctx.fillStyle = '#5a2a1a'; ctx.fillRect(sx - 6, sy + 7, 3, 5); ctx.fillRect(sx + 3, sy + 7, 3, 5);
-}
-
 
 // ─── 玩家 ───
 const player = {
@@ -454,7 +376,6 @@ function update() {
   } else {
     player.moving = false;
   }
-  updatePigs();
 }
 
 function render() {
@@ -482,22 +403,12 @@ function render() {
   }
 
   // 绘制粒子
-  // 野猪
-  for (const p of pigs) {
-    const ppx = Math.round(p.x - cam.x), ppy = Math.round(p.y - cam.y);
-    if (ppx > -T * 2 && ppx < canvas.width + T * 2 && ppy > -T * 2 && ppy < canvas.height + T * 2) {
-      drawPig(ppx, ppy, p);
-    }
-  }
-
   drawParticles();
 
   // 绘制玩家
   const px = Math.round(player.x - cam.x);
   const py = Math.round(player.y - cam.y);
   drawPlayer(px, py);
-  const kEl = document.getElementById('kills');
-  if (kEl) kEl.textContent = '击杀 ' + killCount;
 
   // 简单暗角效果
   const grd = ctx.createRadialGradient(
