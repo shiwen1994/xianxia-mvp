@@ -3,430 +3,401 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>仙侠 · MVP</title>
+<title>仙侠 · 灵墟秘境</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#060806;touch-action:none}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
-#ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
-#joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
-#info{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
+#joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:55%;z-index:20;touch-action:none}
+#location{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#8fbc8f;font:13px monospace;text-shadow:0 0 8px #0a0;text-align:center;z-index:30;pointer-events:none;letter-spacing:2px}
+#quest-tracker{position:fixed;top:10px;left:10px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:10px 14px;min-width:190px;max-width:230px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none;box-shadow:0 0 14px rgba(0,30,0,0.6)}
+#quest-tracker h3{color:#6fcf6f;font-size:11px;letter-spacing:2px;margin-bottom:8px;border-bottom:1px solid #2a4a2a;padding-bottom:4px}
+.q-item{margin-bottom:6px;padding:4px 0;border-bottom:1px solid rgba(42,74,42,0.3)}
+.q-item:last-child{border-bottom:none;margin-bottom:0}
+.q-title{color:#b8e8b8;font-weight:bold}
+.q-progress{color:#6a9a6a;font-size:11px;margin-top:2px}
+#minimap-wrap{position:fixed;top:10px;right:10px;z-index:30;pointer-events:none}
+#minimap{border:1px solid #2a4a2a;border-radius:6px;box-shadow:0 0 10px rgba(0,20,0,0.4)}
+#interact-hint{position:fixed;bottom:58%;left:50%;transform:translateX(-50%);color:#a8d8ff;font:13px monospace;text-shadow:0 0 6px #008;z-index:30;pointer-events:none;opacity:0;transition:opacity 0.3s}
+#dialogue{position:fixed;bottom:0;left:0;width:100%;background:linear-gradient(0deg,rgba(3,10,3,0.97) 0%,rgba(5,18,5,0.93) 100%);border-top:2px solid #2a5a2a;color:#c8e8c8;font:14px monospace;padding:16px 20px 20px;z-index:50;display:none;box-shadow:0 -4px 30px rgba(0,30,0,0.6)}
+#dialogue-name{color:#7af07a;font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:6px}
+#dialogue-text{line-height:1.7;min-height:40px}
+#dialogue-options{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
+.dopt{background:rgba(20,60,20,0.6);border:1px solid #3a7a3a;color:#a8e8a8;padding:5px 14px;border-radius:4px;font:12px monospace;cursor:pointer;pointer-events:auto}
+.dopt:hover{background:rgba(30,90,30,0.7);border-color:#5aba5a}
+#dialogue .hint{color:#5a8a5a;font-size:11px;margin-top:8px}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="joystick-zone"></div>
-<div id="info">灵墟秘境</div>
+<div id="location">灵墟秘境</div>
+<div id="quest-tracker"><h3>✦ 任务追踪</h3><div id="quest-list">靠近NPC按 E 领取任务</div></div>
+<div id="minimap-wrap"><canvas id="minimap" width="140" height="105"></canvas></div>
+<div id="interact-hint">E · 交互</div>
+<div id="dialogue"><div id="dialogue-name"></div><div id="dialogue-text"></div><div id="dialogue-options"></div><div class="hint">按 E 或 ESC 关闭</div></div>
 <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
 <script>
-// ─── 常量 ───
-const T = 32;            // 瓦片尺寸
-const MW = 80, MH = 60; // 地图尺寸（瓦片数）
-const SPEED = 2.4;       // 玩家速度 (像素/帧)
+const T=32,MW=120,MH=90,SPEED=2.4,VISION=14;
+const TILE_SOLID={3:true,4:true,5:true};
+function hash(x,y){let h=x*374761393+y*668265263;h=(h^(h>>13))*1274126177;return(h^(h>>16))&0x7fffffff;}
 
-// ─── 画布 ───
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+const map=[];
+const decoration=[];
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resize();
-window.addEventListener('resize', resize);
-
-// ─── 瓦片类型 ───
-// 0=深草, 1=浅草, 2=路, 3=树, 4=石, 5=水, 6=深草+花
-const TILE_SOLID = { 3: true, 4: true, 5: true };
-
-// ─── 程序化地图生成 ───
-const map = [];
-
-// 简单哈希随机
-function hash(x, y) {
-  let h = x * 374761393 + y * 668265263;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return (h ^ (h >> 16)) & 0x7fffffff;
-}
-
-function genMap() {
-  // 先铺满深草
-  for (let y = 0; y < MH; y++) {
-    map[y] = [];
-    for (let x = 0; x < MW; x++) {
-      map[y][x] = hash(x, y) % 5 === 0 ? 1 : 0;
-    }
+function genMap(){
+  for(let y=0;y<MH;y++){map[y]=[];for(let x=0;x<MW;x++){const r=hash(x,y)%100;map[y][x]=r<38?0:r<68?1:r<78?8:r<83?6:r<90?7:r<95?5:4;}}
+  let px=Math.floor(MW/2),py=Math.floor(MH/2);
+  for(let i=0;i<900;i++){
+    if(px>=0&&px<MW&&py>=0&&py<MH){map[py][px]=2;if(px+1<MW)map[py][px+1]=2;if(py+1<MH)map[py+1][px]=2;}
+    const r=hash(i,777)%5;
+    if(r===0)px++;else if(r===1)px--;else if(r===2)py++;else if(r===3)py--;
+    px=Math.max(1,Math.min(MW-2,px));py=Math.max(1,Math.min(MH-2,py));
+    if(hash(i,888)%3===0){const r2=hash(i,999)%4;if(r2===0)px++;else if(r2===1)px--;else if(r2===2)py++;else py--;}
+    px=Math.max(1,Math.min(MW-2,px));py=Math.max(1,Math.min(MH-2,py));
   }
-
-  // 生成路径（蜿蜒的小路）
-  let px = Math.floor(MW / 2), py = Math.floor(MH / 2);
-  for (let i = 0; i < 600; i++) {
-    if (px >= 0 && px < MW && py >= 0 && py < MH) {
-      map[py][px] = 2;
-      // 路宽2
-      if (px + 1 < MW) map[py][px + 1] = 2;
-      if (py + 1 < MH) map[py + 1][px] = 2;
-    }
-    const r = hash(i, 777) % 5;
-    if (r === 0) px++;
-    else if (r === 1) px--;
-    else if (r === 2) py++;
-    else if (r === 3) py--;
-    // 偶尔转向
-    if (hash(i, 888) % 3 === 0) {
-      const r2 = hash(i, 999) % 4;
-      if (r2 === 0) px++;
-      else if (r2 === 1) px--;
-      else if (r2 === 2) py++;
-      else py--;
-    }
-    px = Math.max(1, Math.min(MW - 2, px));
-    py = Math.max(1, Math.min(MH - 2, py));
-  }
-
-  // 放树和石头
-  for (let y = 0; y < MH; y++) {
-    for (let x = 0; x < MW; x++) {
-      if (map[y][x] === 2) continue; // 路上不放
-      // 边缘不放
-      if (x === 0 || y === 0 || x === MW - 1 || y === MH - 1) continue;
-      // 出生点附近不放
-      const dx = x - Math.floor(MW / 2), dy = y - Math.floor(MH / 2);
-      if (dx * dx + dy * dy < 25) continue;
-
-      const r = hash(x * 3, y * 7) % 100;
-      if (r < 12) map[y][x] = 3;       // 树
-      else if (r < 16) map[y][x] = 4;  // 石
-      else if (r < 17) map[y][x] = 5;  // 水
-      else if (r < 20) map[y][x] = 6;  // 花
-    }
-  }
-
-  // 确保出生点可走
-  const sx = Math.floor(MW / 2), sy = Math.floor(MH / 2);
-  for (let dy = -1; dy <= 1; dy++)
-    for (let dx = -1; dx <= 1; dx++) {
-      const ny = sy + dy, nx = sx + dx;
-      if (ny >= 0 && ny < MH && nx >= 0 && nx < MW)
-        map[ny][nx] = map[ny][nx] === 2 ? 2 : 0;
-    }
+  const sx=Math.floor(MW/2),sy=Math.floor(MH/2);
+  for(let y=0;y<MH;y++){for(let x=0;x<MW;x++){
+    if(map[y][x]===2||x<2||y<2||x>=MW-2||y>=MH-2)continue;
+    const dx=x-sx,dy=y-sy;if(dx*dx+dy*dy<49)continue;
+    const r=hash(x*3,y*7)%100;
+    if(r<14)map[y][x]=3;else if(r<18)map[y][x]=4;else if(r<20)map[y][x]=5;
+  }}
+  for(let y=0;y<MH;y++){for(let x=0;x<MW;x++){
+    if(map[y][x]===2||map[y][x]===5)continue;
+    const r=hash(x*13,y*17)%100;
+    if(r<5)decoration.push({tx:x,ty:y,type:0});
+    else if(r<10)decoration.push({tx:x,ty:y,type:1});
+    else if(r<14)decoration.push({tx:x,ty:y,type:2});
+    else if(r<17)decoration.push({tx:x,ty:y,type:3});
+  }}
+  for(let dy=-2;dy<=2;dy++){for(let dx=-2;dx<=2;dx++){
+    const ny=sy+dy,nx=sx+dx;
+    if(ny>=0&&ny<MH&&nx>=0&&nx<MW)map[ny][nx]=(dx*dx+dy*dy<=4)?0:(map[ny][nx]===2?2:map[ny][nx]);
+  }}
 }
 genMap();
 
-// ─── 瓦片颜色 ───
-const PALETTE = {
-  0: ['#1a2e1a', '#1f351f'],  // 深草（两种随机色）
-  1: ['#253a20', '#2a4025'],  // 浅草
-  2: ['#3a352e', '#433d35'],  // 泥路
-  3: ['#0d1a0d'],             // 树底
-  4: ['#3a3a3a'],             // 石头底
-  5: ['#152535'],             // 水
-  6: ['#1a2e1a'],             // 花底（同深草）
-};
+const SX=Math.floor(MW/2),SY=Math.floor(MH/2);
 
-// ─── 绘制单个瓦片 ───
-function drawTile(sx, sy, type, tx, ty) {
-  const p = PALETTE[type];
-  const ci = hash(tx, ty) % p.length;
-  ctx.fillStyle = p[ci];
-  ctx.fillRect(sx, sy, T, T);
+function makeNPC(id,name,dx,dy,color,glow,dialogues,qt){
+  return{id,name,x:(SX+dx)*T,y:(SY+dy)*T,color,glow,dialogues,questTemplate:qt,activeQuest:null,state:0};
+}
+const npcs=[
+  makeNPC('fairy','灵草仙子',15,-8,'#50fa7b','#20ff50',
+    {idle:['哼，这些凡草哪里比得上我的灵草~','你身上有灵力的气息...有趣。'],
+     quest:['我需要3株灵草，你能帮我采集吗？它们在秘境中微微发光。','灵草在秘境深处，找齐3株再来找我吧！'],
+     complete:['太好了！这是你的报酬，收好哦~','下次再来玩呀~'],
+     delivered:['谢谢你呀！秘境还有更多秘密等着你去发现...']},
+    {title:'采集灵草',desc:'在秘境中寻找3株灵草',target:3,reward:'仙草种子×1'}
+  ),
+  makeNPC('smith','炼器师',-20,12,'#bd93f9','#8800ff',
+    {idle:['这炉火永不熄灭...','想要神器？先帮我找到玄铁。'],
+     quest:['我需要1块玄铁石来铸剑，秘境深处应该有。','还没找到玄铁？它会发出幽蓝色的光。'],
+     complete:['好！就是这块！等着，神器即将问世...','感谢你！'],
+     delivered:['铸器需要时日，你先去探索吧。']},
+    {title:'寻找玄铁',desc:'找到1块玄铁矿石',target:1,reward:'玄铁剑碎片×1'}
+  ),
+  makeNPC('elder','神秘老者',8,22,'#ffb86c','#ff6600',
+    {idle:['天道无常...你有缘来到此地。','修行之路漫漫...'],
+     quest:['我有句话带给炼器师："九转玄铁，火候为要"。','拜托了...'],
+     complete:['你见到炼器师了吗？那句话很重要。'],
+     delivered:['多谢。炼器之道，火候为上。老夫观你天资不错...']},
+    {title:'捎信',desc:'把我的话带给炼器师',target:1,reward:'灵力丹×1'}
+  ),
+];
 
-  if (type === 0 || type === 1) {
-    // 草地纹理 - 小草点
-    const seed = hash(tx * 13, ty * 17);
-    ctx.fillStyle = type === 0 ? '#243524' : '#30482d';
-    for (let i = 0; i < 3; i++) {
-      const gx = sx + ((seed >> (i * 4)) & 0xf) + 4;
-      const gy = sy + ((seed >> (i * 4 + 2)) & 0xf) + 8;
-      ctx.fillRect(gx, gy, 2, 4);
-    }
-  } else if (type === 2) {
-    // 路纹理
-    const seed = hash(tx * 7, ty * 11);
-    ctx.fillStyle = '#4a4440';
-    for (let i = 0; i < 2; i++) {
-      const gx = sx + ((seed >> (i * 5)) & 0x1e);
-      const gy = sy + ((seed >> (i * 5 + 3)) & 0x1e);
-      ctx.fillRect(gx, gy, 2, 2);
-    }
-  } else if (type === 3) {
-    // 树 - 树干 + 树冠
-    // 树干
-    ctx.fillStyle = '#2a1f15';
-    ctx.fillRect(sx + 12, sy + 16, 8, 16);
-    // 树冠（深绿圆形）
-    ctx.fillStyle = '#0f2a12';
-    ctx.fillRect(sx + 4, sy + 2, 24, 20);
-    ctx.fillStyle = '#143018';
-    ctx.fillRect(sx + 8, sy + 4, 16, 14);
-    // 高光
-    ctx.fillStyle = '#1a3d1e';
-    ctx.fillRect(sx + 10, sy + 6, 8, 6);
-  } else if (type === 4) {
-    // 石头
-    ctx.fillStyle = '#4a4a4a';
-    ctx.fillRect(sx + 6, sy + 10, 20, 16);
-    ctx.fillStyle = '#555555';
-    ctx.fillRect(sx + 8, sy + 12, 16, 10);
-    ctx.fillStyle = '#606060';
-    ctx.fillRect(sx + 10, sy + 13, 8, 4);
-  } else if (type === 5) {
-    // 水 - 波纹
-    const t = Date.now() / 800;
-    ctx.fillStyle = '#1a3040';
-    for (let i = 0; i < 3; i++) {
-      const wx = sx + 4 + i * 10 + Math.sin(t + tx + i) * 3;
-      const wy = sy + 8 + Math.cos(t + ty + i * 2) * 4;
-      ctx.fillRect(wx, wy, 6, 2);
-    }
-  } else if (type === 6) {
-    // 花草地
-    const seed = hash(tx * 19, ty * 23);
-    ctx.fillStyle = '#243524';
-    for (let i = 0; i < 2; i++) {
-      const gx = sx + ((seed >> (i * 4)) & 0xf) + 4;
-      const gy = sy + ((seed >> (i * 4 + 2)) & 0xf) + 8;
-      ctx.fillRect(gx, gy, 2, 4);
-    }
-    // 小花
-    const colors = ['#7a5a8a', '#8a6a6a', '#6a7a6a'];
-    ctx.fillStyle = colors[seed % 3];
-    const fx = sx + (seed & 0x1e) + 4;
-    const fy = sy + ((seed >> 5) & 0x1e) + 4;
-    ctx.fillRect(fx, fy, 3, 3);
-    ctx.fillStyle = '#c0a0d0';
-    ctx.fillRect(fx + 1, fy + 1, 1, 1);
-  }
+const questItems=[];
+for(let i=0;i<6;i++){let x,y,t=0;do{x=hash(i,111)%(MW-20)+10;y=hash(i,222)%(MH-20)+10;t++;}while(Math.abs(x-SX)<20&&Math.abs(y-SY)<20&&t<30);questItems.push({id:'herb',x:x*T+T/2,y:y*T+T/2,collected:false,color:'#50fa7b',name:'灵草'});}
+for(let i=0;i<4;i++){let x,y,t=0;do{x=hash(i,333)%(MW-20)+10;y=hash(i,444)%(MH-20)+10;t++;}while(Math.abs(x-SX)<20&&Math.abs(y-SY)<20&&t<30);questItems.push({id:'iron',x:x*T+T/2,y:y*T+T/2,collected:false,color:'#bd93f9',name:'玄铁石'});}
+
+const player={x:SX*T+T/2,y:SY*T+T/2,dir:0,moving:false};
+const particles=[];for(let i=0;i<50;i++){particles.push({x:Math.random()*MW*T,y:Math.random()*MH*T,speed:0.15+Math.random()*0.25,phase:Math.random()*Math.PI*2,size:1+Math.floor(Math.random()*2)});}
+
+let dialogueActive=false,currentNPC=null,dialogueIdx=0,messageDelivered=false;
+const dialogueEl=document.getElementById('dialogue');
+const dNameEl=document.getElementById('dialogue-name');
+const dTextEl=document.getElementById('dialogue-text');
+const dOptsEl=document.getElementById('dialogue-options');
+const interactHint=document.getElementById('interact-hint');
+const questListEl=document.getElementById('quest-list');
+
+function getTexts(npc){
+  if(npc.id==='elder'&&messageDelivered)return npc.dialogues.delivered;
+  if(npc.state===2)return npc.dialogues.delivered||npc.dialogues.complete;
+  if(npc.activeQuest&&npc.activeQuest.done)return npc.dialogues.complete;
+  if(npc.activeQuest)return npc.dialogues.quest;
+  return npc.dialogues.idle;
 }
 
-// ─── 玩家 ───
-const player = {
-  x: Math.floor(MW / 2) * T + T / 2,
-  y: Math.floor(MH / 2) * T + T / 2,
-  dir: 0,    // 0=下,1=左,2=上,3=右
-  frame: 0,
-  moving: false
-};
-
-function drawPlayer(sx, sy) {
-  const bob = player.moving ? Math.sin(Date.now() / 120) * 2 : 0;
-  const py = sy + bob;
-
-  // 阴影
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(sx - 6, sy + 12, 14, 4);
-
-  // 身体 - 修仙长袍
-  ctx.fillStyle = '#3a4a5a';
-  ctx.fillRect(sx - 6, py - 4, 12, 16);
-
-  // 腰带
-  ctx.fillStyle = '#6a5a3a';
-  ctx.fillRect(sx - 6, py + 2, 12, 2);
-
-  // 头
-  ctx.fillStyle = '#d4b896';
-  ctx.fillRect(sx - 4, py - 10, 8, 7);
-
-  // 头发（长发/发髻风格）
-  ctx.fillStyle = '#1a1a2a';
-  ctx.fillRect(sx - 5, py - 12, 10, 4);
-  if (player.dir !== 2) { // 非背面
-    ctx.fillRect(sx - 5, py - 8, 2, 6);
-    ctx.fillRect(sx + 3, py - 8, 2, 6);
+function openDialogue(npc){
+  currentNPC=npc;dialogueActive=true;dialogueIdx=0;
+  const texts=getTexts(npc);
+  dNameEl.textContent='「 '+npc.name+' 」';dTextEl.textContent=texts[0];dOptsEl.innerHTML='';
+  if(!npc.activeQuest&&npc.state===0){
+    const btn=document.createElement('button');btn.className='dopt';btn.textContent='接受任务';
+    btn.onclick=()=>{npc.activeQuest={...npc.questTemplate,collected:0,done:false,delivered:npc.id==='smith'?false:undefined};npc.state=1;updateQuestUI();advanceDialogue();};
+    dOptsEl.appendChild(btn);
   }
-
-  // 发光灵力效果（移动时）
-  if (player.moving) {
-    ctx.fillStyle = `rgba(100,180,255,${0.15 + Math.sin(Date.now() / 200) * 0.1})`;
-    ctx.fillRect(sx - 8, py - 14, 18, 26);
+  if(npc.id==='elder'&&npc.activeQuest&&!npc.activeQuest.done&&!messageDelivered){
+    const btn=document.createElement('button');btn.className='dopt';btn.textContent='转告："九转玄铁，火候为要"';
+    btn.onclick=()=>{messageDelivered=true;npc.activeQuest.done=true;npc.state=2;const smith=npcs.find(n=>n.id==='smith');if(smith&&smith.activeQuest&&!smith.activeQuest.delivered)smith.activeQuest.delivered=true;updateQuestUI();advanceDialogue();};
+    dOptsEl.appendChild(btn);
   }
+  if(npc.id==='smith'&&npc.activeQuest&&npc.activeQuest.done&&npc.activeQuest.delivered&&npc.state!==2){
+    const btn=document.createElement('button');btn.className='dopt';btn.textContent='提交任务';
+    btn.onclick=()=>{npc.state=2;npc.activeQuest=null;updateQuestUI();closeDialogue();};
+    dOptsEl.appendChild(btn);
+  }
+  dialogueEl.style.display='block';
+}
 
-  // 眼睛（非背面时）
-  if (player.dir !== 2) {
-    ctx.fillStyle = '#a0c0ff';
-    if (player.dir === 0) { // 朝下
-      ctx.fillRect(sx - 3, py - 6, 2, 2);
-      ctx.fillRect(sx + 1, py - 6, 2, 2);
-    } else if (player.dir === 1) { // 朝左
-      ctx.fillRect(sx - 3, py - 6, 2, 2);
-      ctx.fillRect(sx - 1, py - 6, 2, 2);
-    } else { // 朝右
-      ctx.fillRect(sx - 1, py - 6, 2, 2);
-      ctx.fillRect(sx + 1, py - 6, 2, 2);
+function advanceDialogue(){if(!currentNPC)return;const texts=getTexts(currentNPC);dialogueIdx++;if(dialogueIdx<texts.length)dTextEl.textContent=texts[dialogueIdx];else closeDialogue();}
+function closeDialogue(){dialogueActive=false;currentNPC=null;dialogueEl.style.display='none';}
+
+function updateQuestUI(){
+  let html='',hasActive=false;
+  for(const npc of npcs){
+    if(npc.activeQuest){
+      hasActive=true;const q=npc.activeQuest;
+      let p='';
+      if(npc.id==='fairy')p='灵草: '+q.collected+' / '+q.target;
+      else if(npc.id==='smith')p=q.delivered?'已传达':(q.done?'完成':'等待传达');
+      else if(npc.id==='elder')p=q.done?'完成':'传话给炼器师';
+      html+='<div class="q-item"><div class="q-title">「'+npc.name+'」'+q.title+'</div><div class="q-progress">'+p+'</div></div>';
     }
   }
+  questListEl.innerHTML=hasActive?html:'靠近NPC按 E 领取任务';
 }
 
-// ─── 相机 ───
-const cam = { x: 0, y: 0 };
+const keys={};
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(e.key==='e'||e.key==='E')handleInteract();if(e.key==='Escape')closeDialogue();e.preventDefault();});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
-function updateCamera() {
-  const tx = player.x - canvas.width / 2;
-  const ty = player.y - canvas.height / 2;
-  cam.x += (tx - cam.x) * 0.1;
-  cam.y += (ty - cam.y) * 0.1;
-  // 限制边界
-  cam.x = Math.max(0, Math.min(MW * T - canvas.width, cam.x));
-  cam.y = Math.max(0, Math.min(MH * T - canvas.height, cam.y));
+function handleInteract(){if(dialogueActive){advanceDialogue();return;}for(const npc of npcs){const dx=player.x-npc.x,dy=player.y-npc.y;if(Math.sqrt(dx*dx+dy*dy)<T*3.5){openDialogue(npc);return;}}}
+
+const input={dx:0,dy:0};
+nipplejs.create({zone:document.getElementById('joystick-zone'),mode:'dynamic',color:'rgba(100,180,255,0.3)',size:100,restOpacity:0.3}).on('move',(evt,data)=>{if(data.direction){input.dx=Math.cos(data.angle.radian)*Math.min(data.force,1);input.dy=Math.sin(data.angle.radian)*Math.min(data.force,1);}}).on('end',()=>{input.dx=0;input.dy=0;});
+
+const canvas=document.getElementById('c');const ctx=canvas.getContext('2d');
+const mmCanvas=document.getElementById('minimap');const mmCtx=mmCanvas.getContext('2d');
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}resize();window.addEventListener('resize',resize);
+const cam={x:0,y:0};
+function updateCamera(){const tx=player.x-canvas.width/2;const ty=player.y-canvas.height/2;cam.x+=(tx-cam.x)*0.1;cam.y+=(ty-cam.y)*0.1;cam.x=Math.max(0,Math.min(MW*T-canvas.width,cam.x));cam.y=Math.max(0,Math.min(MH*T-canvas.height,cam.y));}
+function isSolid(px,py){const tx=Math.floor(px/T),ty=Math.floor(py/T);if(tx<0||ty<0||tx>=MW||ty>=MH)return true;return!!TILE_SOLID[map[ty][tx]];}
+function canMove(nx,ny){const hw=5,hh=5;return!isSolid(nx-hw,ny-hh)&&!isSolid(nx+hw,ny-hh)&&!isSolid(nx-hw,ny+hh)&&!isSolid(nx+hw,ny+hh);}
+
+function drawTile(sx,sy,type,tx,ty){
+  const h=hash(tx,ty);
+  if(type===0){
+    ctx.fillStyle='#1a2e1a';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#243824';for(let i=0;i<4;i++){ctx.fillRect(sx+((h>>(i*4))&0xf)+3,sy+((h>>(i*4+2))&0xf)+6,2,5);ctx.fillRect(sx+((h>>(i*4))&0xf)+2,sy+((h>>(i*4+2))&0xf)+8,1,3);}
+    ctx.fillStyle='#2a4a2a';ctx.fillRect(sx+((h>>6)&7)+8,sy+((h>>9)&7)+4,2,2);
+  }else if(type===1){
+    ctx.fillStyle='#243525';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#2d4530';for(let i=0;i<3;i++){ctx.fillRect(sx+((h>>(i*5))&0x1e)+2,sy+((h>>(i*5+3))&0x1e)+8,2,4);}
+    ctx.fillStyle='#30482d';ctx.fillRect(sx+14,sy+6,3,3);
+  }else if(type===2){
+    ctx.fillStyle='#332e28';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#3e3830';for(let i=0;i<3;i++){ctx.fillRect(sx+((h>>(i*6))&0x1f),sy+((h>>(i*6+4))&0x1f)+4,3,2);}
+    ctx.fillStyle='#4a4438';ctx.fillRect(sx+8,sy+16,6,4);
+  }else if(type===3){
+    ctx.fillStyle='#1e2e1e';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#2a1f14';ctx.fillRect(sx+11,sy+14,10,18);
+    ctx.fillStyle='#3a2a1a';ctx.fillRect(sx+13,sy+16,3,14);
+    ctx.fillStyle='#0a1f0a';ctx.fillRect(sx+2,sy+2,28,18);
+    ctx.fillStyle='#0f2a0f';ctx.fillRect(sx+5,sy,22,16);
+    ctx.fillStyle='#142814';ctx.fillRect(sx+8,sy+3,16,12);
+    ctx.fillStyle='#1a3a1a';ctx.fillRect(sx+11,sy+5,10,8);
+    ctx.fillStyle='rgba(0,0,0,0.25)';ctx.fillRect(sx+6,sy+18,20,6);
+  }else if(type===4){
+    ctx.fillStyle='#252525';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#3c3c3c';ctx.fillRect(sx+5,sy+9,22,17);
+    ctx.fillStyle='#484848';ctx.fillRect(sx+8,sy+11,16,11);
+    ctx.fillStyle='#585858';ctx.fillRect(sx+10,sy+13,8,5);
+    ctx.fillStyle='#606060';ctx.fillRect(sx+12,sy+14,4,3);
+  }else if(type===5){
+    const t=Date.now()/800;
+    ctx.fillStyle='#0f2030';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#162840';for(let i=0;i<4;i++){ctx.fillRect(sx+3+i*8+Math.sin(t+tx*0.5+i)*4,sy+7+Math.cos(t+ty*0.7+i*1.3)*5,8,2);}
+    ctx.fillStyle='rgba(40,100,160,0.15)';ctx.fillRect(sx+2,sy+2,10,6);
+    ctx.fillStyle='rgba(80,160,255,0.08)';ctx.fillRect(sx+18,sy+14,8,4);
+  }else if(type===6){
+    ctx.fillStyle='#1e2e1e';ctx.fillRect(sx,sy,T,T);
+    ctx.fillStyle='#243824';for(let i=0;i<2;i++){ctx.fillRect(sx+((h>>(i*6))&0x1f)+2,sy+((h>>(i*6+3))&0x1f)+6,2,5);}
+    const colors=['#7a5a8a','#8a6a7a','#6a7a6a'];ctx.fillStyle=colors[h%3];
+    const fx=sx+(h&0x1e)+4,fy=sy+((h>>5)&0x1e)+4;ctx.fillRect(fx,fy,4,4);ctx.fillStyle='#c0a0d0';ctx.fillRect(fx+1,fy+1,2,2);
+  }else if(type===7){ctx.fillStyle='#3a3028';ctx.fillRect(sx,sy,T,T);ctx.fillStyle='#453a30';for(let i=0;i<3;i++){ctx.fillRect(sx+((h>>(i*5))&0x1e),sy+((h>>(i*5+3))&0x1e)+6,3,2);}}
+  else if(type===8){ctx.fillStyle='#2a2518';ctx.fillRect(sx,sy,T,T);ctx.fillStyle='#332d20';for(let i=0;i<2;i++){ctx.fillRect(sx+((h>>(i*7))&0x1f),sy+((h>>(i*7+4))&0x1f)+8,3,3);}}
+  else{ctx.fillStyle='#1a2e1a';ctx.fillRect(sx,sy,T,T);}
 }
 
-// ─── 碰撞检测 ───
-function isSolid(px, py) {
-  const tx = Math.floor(px / T);
-  const ty = Math.floor(py / T);
-  if (tx < 0 || ty < 0 || tx >= MW || ty >= MH) return true;
-  return !!TILE_SOLID[map[ty][tx]];
-}
-
-function canMove(nx, ny) {
-  // 检测角色碰撞箱（稍小于一个瓦片）
-  const hw = 5, hh = 5;
-  return !isSolid(nx - hw, ny - hh) &&
-         !isSolid(nx + hw, ny - hh) &&
-         !isSolid(nx - hw, ny + hh) &&
-         !isSolid(nx + hw, ny + hh);
-}
-
-// ─── 输入 ───
-const input = { dx: 0, dy: 0 };
-
-// 键盘
-const keys = {};
-document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
-document.addEventListener('keyup', e => { keys[e.key] = false; });
-
-// 虚拟摇杆
-nipplejs.create({
-  zone: document.getElementById('joystick-zone'),
-  mode: 'dynamic',
-  color: 'rgba(100,180,255,0.3)',
-  size: 100,
-  restOpacity: 0.3
-}).on('move', (evt, data) => {
-  if (data.direction) {
-    const a = data.angle.radian;
-    const f = Math.min(data.force, 1);
-    input.dx = Math.cos(a) * f;
-    input.dy = Math.sin(a) * f;
-  }
-}).on('end', () => {
-  input.dx = 0;
-  input.dy = 0;
-});
-
-// ─── 粒子系统（灵力微光）───
-const particles = [];
-for (let i = 0; i < 30; i++) {
-  particles.push({
-    x: Math.random() * MW * T,
-    y: Math.random() * MH * T,
-    speed: 0.2 + Math.random() * 0.3,
-    phase: Math.random() * Math.PI * 2,
-    size: 1 + Math.floor(Math.random() * 2)
-  });
-}
-
-function drawParticles() {
-  const t = Date.now() / 1000;
-  ctx.fillStyle = 'rgba(120,200,255,0.4)';
-  for (const p of particles) {
-    const sx = p.x - cam.x;
-    const sy = p.y - cam.y + Math.sin(t * p.speed + p.phase) * 8;
-    if (sx < -10 || sx > canvas.width + 10 || sy < -10 || sy > canvas.height + 10) continue;
-    const alpha = 0.2 + Math.sin(t * 2 + p.phase) * 0.2;
-    ctx.globalAlpha = alpha;
-    ctx.fillRect(Math.round(sx), Math.round(sy), p.size, p.size);
-  }
-  ctx.globalAlpha = 1;
-}
-
-// ─── 主循环 ───
-function update() {
-  // 合并键盘输入
-  let dx = input.dx, dy = input.dy;
-  if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
-  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1;
-  if (keys['ArrowUp'] || keys['w'] || keys['W']) dy = -1;
-  if (keys['ArrowDown'] || keys['s'] || keys['S']) dy = 1;
-
-  // 归一化
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (len > 0.1) {
-    dx = (dx / len) * SPEED;
-    dy = (dy / len) * SPEED;
-    player.moving = true;
-
-    // 朝向
-    if (Math.abs(dx) > Math.abs(dy)) {
-      player.dir = dx > 0 ? 3 : 1;
-    } else {
-      player.dir = dy > 0 ? 0 : 2;
+function drawDecorations(){
+  const t=Date.now()/1000;
+  for(const dec of decoration){
+    const sx=dec.tx*T-cam.x,sy=dec.ty*T-cam.y;
+    if(sx<-T||sx>canvas.width+T||sy<-T||sy>canvas.height+T)continue;
+    if(dec.type===0){
+      ctx.fillStyle='#8a5a3a';ctx.fillRect(sx+13,sy+20,6,8);
+      ctx.fillStyle='#c06040';ctx.fillRect(sx+9,sy+12,14,10);
+      ctx.fillStyle='#e07050';ctx.fillRect(sx+11,sy+14,10,6);
+      ctx.fillStyle='#fff0e0';ctx.fillRect(sx+12,sy+15,2,2);
+    }else if(dec.type===1){
+      const pulse=0.5+Math.sin(t*2+dec.tx+dec.ty)*0.3;
+      ctx.fillStyle='rgba(60,200,80,'+(pulse*0.15)+')';ctx.fillRect(sx-4,sy-4,T+8,T+8);
+      ctx.fillStyle='#3a8a4a';for(let i=0;i<3;i++){ctx.fillRect(sx+8+i*6,sy+14,2,10);ctx.fillRect(sx+7+i*6,sy+10,4,6);}
+      ctx.fillStyle='rgba(100,255,120,'+(pulse*0.6)+')';ctx.fillRect(sx+12,sy+8,8,8);
+    }else if(dec.type===2){
+      const colors=['#ffb0c0','#ffc0d0','#ffa0b0','#ff9090'];
+      for(let i=0;i<4;i++){
+        const fx=sx+((hash(dec.tx*13+i,dec.ty*17+i)>>i)&0x1f)+2;
+        const fy=sy+((hash(dec.tx*17+i,dec.ty*23+i)>>(i+2))&0x1f)+2;
+        ctx.globalAlpha=0.5+Math.sin(t*0.5+dec.tx+dec.ty+i)*0.3;
+        ctx.fillStyle=colors[hash(dec.tx+i,dec.ty+i)%4];
+        ctx.fillRect(fx,fy,3,3);
+      }
+      ctx.globalAlpha=1;
+    }else if(dec.type===3){
+      ctx.fillStyle='#4a4a4a';ctx.fillRect(sx+8,sy+18,16,10);
+      ctx.fillStyle='#585858';ctx.fillRect(sx+10,sy+16,12,8);
+      ctx.fillStyle='#606060';ctx.fillRect(sx+12,sy+17,8,5);
     }
-
-    // 分轴移动（滑墙效果）
-    const nx = player.x + dx;
-    const ny = player.y + dy;
-    if (canMove(nx, player.y)) player.x = nx;
-    if (canMove(player.x, ny)) player.y = ny;
-
-    // 世界边界
-    player.x = Math.max(T, Math.min((MW - 1) * T, player.x));
-    player.y = Math.max(T, Math.min((MH - 1) * T, player.y));
-  } else {
-    player.moving = false;
   }
 }
 
-function render() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function drawPlayer(sx,sy){
+  const bob=player.moving?Math.sin(Date.now()/120)*2:0;const py=sy+bob;
+  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(sx-6,sy+12,14,4);
+  ctx.fillStyle='#3a4a5a';ctx.fillRect(sx-6,py-4,12,16);
+  ctx.fillStyle='#6a5a3a';ctx.fillRect(sx-6,py+2,12,2);
+  ctx.fillStyle='#d4b896';ctx.fillRect(sx-4,py-10,8,7);
+  ctx.fillStyle='#1a1a2a';ctx.fillRect(sx-5,py-12,10,4);
+  if(player.dir!==2){ctx.fillRect(sx-5,py-8,2,6);ctx.fillRect(sx+3,py-8,2,6);}
+  if(player.moving){ctx.fillStyle='rgba(100,180,255,'+(0.15+Math.sin(Date.now()/200)*0.1)+')';ctx.fillRect(sx-8,py-14,18,26);}
+  if(player.dir!==2){ctx.fillStyle='#a0c0ff';if(player.dir===0){ctx.fillRect(sx-3,py-6,2,2);ctx.fillRect(sx+1,py-6,2,2);}else if(player.dir===1){ctx.fillRect(sx-3,py-6,2,2);ctx.fillRect(sx-1,py-6,2,2);}else{ctx.fillRect(sx-1,py-6,2,2);ctx.fillRect(sx+1,py-6,2,2);}}
+}
 
-  // 背景
-  ctx.fillStyle = '#0a0e0a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+function drawNPCs(){
+  for(const npc of npcs){
+    const sx=npc.x-cam.x,sy=npc.y-cam.y;
+    if(sx<-T*2||sx>canvas.width+T*2||sy<-T*2||sy>canvas.height+T*2)continue;
+    const pulse=0.6+Math.sin(Date.now()/400)*0.4;
+    const grd=ctx.createRadialGradient(sx,sy-8,0,sx,sy-8,24);
+    grd.addColorStop(0,npc.color+'44');grd.addColorStop(1,'transparent');
+    ctx.fillStyle=grd;ctx.fillRect(sx-24,sy-32,sx+24,sy+16);
+    ctx.fillStyle=npc.color+'22';ctx.fillRect(sx-7,sy-18,14,26);
+    ctx.fillStyle=npc.color;ctx.fillRect(sx-5,sy-14,10,20);
+    ctx.fillStyle=npc.color;ctx.fillRect(sx-3,sy-18,6,6);
+    ctx.fillStyle='rgba(255,255,255,0.3)';ctx.fillRect(sx-2,sy-17,2,2);
+  }
+}
 
+function drawQuestItems(){
+  const t=Date.now()/1000;
+  for(const item of questItems){
+    if(item.collected)continue;
+    const sx=item.x-cam.x,sy=item.y-cam.y;
+    if(sx<-T||sx>canvas.width+T||sy<-T||sy>canvas.height+T)continue;
+    const pulse=0.5+Math.sin(t*2+sx+sy)*0.5;
+    const grd=ctx.createRadialGradient(sx,sy,0,sx,sy,20);
+    grd.addColorStop(0,item.color+'66');grd.addColorStop(1,'transparent');
+    ctx.fillStyle=grd;ctx.fillRect(sx-20,sy-20,sx+20,sy+20);
+    ctx.fillStyle=item.color;ctx.fillRect(sx-5,sy-5,10,10);
+    ctx.fillStyle='rgba(255,255,255,'+pulse*0.8+')';ctx.fillRect(sx-2,sy-2,4,4);
+  }
+}
+
+function drawFog(){
+  const px=player.x-cam.x,py=player.y-cam.y;
+  const v=VISION*T;
+  const grd=ctx.createRadialGradient(px,py,v*0.6,px,py,v);
+  grd.addColorStop(0,'rgba(5,10,5,0)');
+  grd.addColorStop(0.5,'rgba(5,10,5,0.3)');
+  grd.addColorStop(0.8,'rgba(3,8,3,0.7)');
+  grd.addColorStop(1,'rgba(2,6,2,0.92)');
+  ctx.fillStyle=grd;ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+
+  const t=Date.now()/1000;
+  for(const p of particles){
+    const sx=p.x-cam.x,sy=p.y-cam.y+Math.sin(t*p.speed+p.phase)*8;
+    if(sx<-10||sx>canvas.width+10||sy<-10||sy>canvas.height+10)continue;
+    ctx.globalAlpha=0.2+Math.sin(t*2+p.phase)*0.2;
+    ctx.fillStyle='rgba(120,200,255,0.4)';
+    ctx.fillRect(Math.round(sx),Math.round(sy),p.size,p.size);
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawMinimap(){
+  mmCtx.fillStyle='#060806';mmCtx.fillRect(0,0,140,105);
+  const sX=140/MW,sY=105/MH;
+  for(let ty=0;ty<MH;ty+=2){for(let tx=0;tx<MW;tx+=2){
+    const mx=Math.floor(tx*sX),my=Math.floor(ty*sY);
+    const c=map[ty][tx];
+    mmCtx.fillStyle=c===3?'#0f2a0f':c===4?'#3c3c3c':c===5?'#162840':c===2?'#3e3830':'#1a2e1a';
+    mmCtx.fillRect(mx,my,Math.ceil(sX*2),Math.ceil(sY*2));
+  }}
+  for(const npc of npcs){mmCtx.fillStyle=npc.color;mmCtx.fillRect(Math.floor(npc.x/T*sX)-2,Math.floor(npc.y/T*sY)-2,4,4);}
+  mmCtx.fillStyle='#ff6b6b';mmCtx.fillRect(Math.floor(player.x/T*sX)-2,Math.floor(player.y/T*sY)-2,4,4);
+  for(const item of questItems){if(item.collected)continue;mmCtx.fillStyle=item.color+'88';mmCtx.fillRect(Math.floor(item.x/T*sX)-1,Math.floor(item.y/T*sY)-1,3,3);}
+}
+
+function checkItemPickup(){
+  for(const item of questItems){
+    if(item.collected)continue;
+    const dx=player.x-item.x,dy=player.y-item.y;
+    if(Math.sqrt(dx*dx+dy*dy)<T*1.5){
+      item.collected=true;
+      if(item.id==='herb'){const fairy=npcs.find(n=>n.id==='fairy');if(fairy&&fairy.activeQuest&&!fairy.activeQuest.done){fairy.activeQuest.collected++;if(fairy.activeQuest.collected>=fairy.activeQuest.target)fairy.activeQuest.done=true;updateQuestUI();}}
+      if(item.id==='iron'){const smith=npcs.find(n=>n.id==='smith');if(smith&&smith.activeQuest&&!smith.activeQuest.done&&smith.activeQuest.delivered){smith.activeQuest.collected++;if(smith.activeQuest.collected>=smith.activeQuest.target)smith.activeQuest.done=true;updateQuestUI();}}
+    }
+  }
+}
+
+  let near=null;
+  for(const npc of npcs){const dx=player.x-npc.x,dy=player.y-npc.y;if(Math.sqrt(dx*dx+dy*dy)<T*3.5){near=npc;break;}}
+  interactHint.style.opacity=near?'1':'0';
+}
+
+function update(){
+  let dx=input.dx,dy=input.dy;
+  if(keys['ArrowLeft']||keys['a']||keys['A'])dx=-1;
+  if(keys['ArrowRight']||keys['d']||keys['D'])dx=1;
+  if(keys['ArrowUp']||keys['w']||keys['W'])dy=-1;
+  if(keys['ArrowDown']||keys['s']||keys['S'])dy=1;
+  const len=Math.sqrt(dx*dx+dy*dy);
+  if(len>0.1){dx=(dx/len)*SPEED;dy=(dy/len)*SPEED;player.moving=true;
+    if(Math.abs(dx)>Math.abs(dy)){player.dir=dx>0?3:1;}else{player.dir=dy>0?0:2;}
+    const nx=player.x+dx,ny=player.y+dy;
+    if(canMove(nx,player.y))player.x=nx;
+    if(canMove(player.x,ny))player.y=ny;
+    player.x=Math.max(T,Math.min((MW-1)*T,player.x));
+    player.y=Math.max(T,Math.min((MH-1)*T,player.y));
+  }else{player.moving=false;}
+  checkItemPickup();
+  checkNearbyNPC();
+}
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#060806';ctx.fillRect(0,0,canvas.width,canvas.height);
   updateCamera();
-
-  // 计算可视瓦片范围
-  const startTX = Math.max(0, Math.floor(cam.x / T) - 1);
-  const startTY = Math.max(0, Math.floor(cam.y / T) - 1);
-  const endTX = Math.min(MW - 1, Math.ceil((cam.x + canvas.width) / T) + 1);
-  const endTY = Math.min(MH - 1, Math.ceil((cam.y + canvas.height) / T) + 1);
-
-  // 绘制地图
-  for (let ty = startTY; ty <= endTY; ty++) {
-    for (let tx = startTX; tx <= endTX; tx++) {
-      const sx = Math.round(tx * T - cam.x);
-      const sy = Math.round(ty * T - cam.y);
-      drawTile(sx, sy, map[ty][tx], tx, ty);
-    }
-  }
-
-  // 绘制粒子
+  const sTX=Math.max(0,Math.floor(cam.x/T)-1),sTY=Math.max(0,Math.floor(cam.y/T)-1);
+  const eTX=Math.min(MW-1,Math.ceil((cam.x+canvas.width)/T)+1);
+  const eTY=Math.min(MH-1,Math.ceil((cam.y+canvas.height)/T)+1);
+  for(let ty=sTY;ty<=eTY;ty++){for(let tx=sTX;tx<=eTX;tx++){drawTile((tx*T-cam.x),(ty*T-cam.y),map[ty][tx],tx,ty);}}
+  drawDecorations();
+  drawQuestItems();
+  drawNPCs();
   drawParticles();
-
-  // 绘制玩家
-  const px = Math.round(player.x - cam.x);
-  const py = Math.round(player.y - cam.y);
-  drawPlayer(px, py);
-
-  // 简单暗角效果
-  const grd = ctx.createRadialGradient(
-    canvas.width / 2, canvas.height / 2, canvas.width * 0.3,
-    canvas.width / 2, canvas.height / 2, canvas.width * 0.75
-  );
-  grd.addColorStop(0, 'rgba(0,0,0,0)');
-  grd.addColorStop(1, 'rgba(0,5,0,0.5)');
-  ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const px=Math.round(player.x-cam.x),py=Math.round(player.y-cam.y);
+  drawPlayer(px,py);
+  drawFog();
+  drawMinimap();
 }
 
-function loop() {
-  update();
-  render();
-  requestAnimationFrame(loop);
-}
-
+function loop(){update();render();requestAnimationFrame(loop);}
 loop();
 </script>
 </body>
