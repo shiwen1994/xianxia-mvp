@@ -126,7 +126,7 @@ nipplejs.create({
 }).on('move', (evt, data) => {
   if (data.direction) {
     input.dx = Math.cos(data.angle.radian) * Math.min(data.force, 1);
-    input.dy = Math.sin(data.angle.radian) * Math.min(data.force, 1);
+    input.dy = -Math.sin(data.angle.radian) * Math.min(data.force, 1);
   }
 }).on('end', () => { input.dx = 0; input.dy = 0; });
 
