@@ -8,13 +8,19 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action:none}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+#kills{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
+#atb{position:fixed;right:16px;bottom:40%;width:64px;height:64px;border-radius:50%;background:rgba(80,30,30,0.85);border:3px solid #cc4444;color:#fff;font:bold 13px monospace;z-index:50;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 12px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.2}
+#atb:active{background:rgba(180,40,40,0.9);transform:scale(0.93)}
+#atb-hint{font-size:10px;opacity:0.7}
 #ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 #joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
 #info{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
 </style>
 </head>
 <body>
+<div id="kills">击杀 0</div>
 <canvas id="c"></canvas>
+<button id="atb" type="button"><span>攻击</span><span id="atb-hint">SPACE</span></button>
 <div id="joystick-zone"></div>
 <div id="info">灵墟秘境</div>
 <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
@@ -214,7 +220,36 @@ const player = {
 };
 
 const MAX_PIGS = 3;
+const ATK_RANGE = T * 1.8;
+let killCount = 0;
+let isAttacking = false;
 const pigs = [];
+const killsEl = document.getElementById('kills');
+const attackButton = document.getElementById('atb');
+
+function updateKillDisplay() {
+  killsEl.textContent = `击杀 ${killCount}`;
+}
+
+function performAttack() {
+  if (isAttacking) return;
+  isAttacking = true;
+  setTimeout(() => {
+    isAttacking = false;
+  }, 300);
+
+  for (let i = pigs.length - 1; i >= 0; i--) {
+    const pig = pigs[i];
+    if (Math.hypot(pig.x - player.x, pig.y - player.y) > ATK_RANGE) continue;
+    pig.alive = false;
+    pigs.splice(i, 1);
+    killCount++;
+  }
+
+  updateKillDisplay();
+}
+
+updateKillDisplay();
 
 function drawPlayer(sx, sy) {
   const bob = player.moving ? Math.sin(Date.now() / 120) * 1.5 : 0;
@@ -566,8 +601,20 @@ const input = { dx: 0, dy: 0 };
 
 // 键盘
 const keys = {};
-document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') performAttack();
+  e.preventDefault();
+});
 document.addEventListener('keyup', e => { keys[e.key] = false; });
+attackButton.addEventListener('touchstart', e => {
+  e.preventDefault();
+  performAttack();
+}, { passive: false });
+attackButton.addEventListener('mousedown', e => {
+  e.preventDefault();
+  performAttack();
+});
 
 // 虚拟摇杆
 nipplejs.create({
