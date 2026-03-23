@@ -9,6 +9,9 @@
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action:none}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 #kills{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
+#hp{position:fixed;top:8px;right:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#fff;font:12px monospace;z-index:30;pointer-events:none}
+#hp .heart{display:inline-block}
+#hp .lost{filter:grayscale(1);opacity:0.35}
 #atb{position:fixed;right:16px;bottom:15%;width:64px;height:64px;border-radius:50%;background:rgba(80,30,30,0.85);border:3px solid #cc4444;color:#fff;font:bold 13px monospace;z-index:50;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 12px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.2}
 #atb:active{background:rgba(180,40,40,0.9);transform:scale(0.93)}
 #atb-hint{font-size:10px;opacity:0.7}
@@ -19,6 +22,7 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 </head>
 <body>
 <div id="kills">击杀 0</div>
+<div id="hp"></div>
 <canvas id="c"></canvas>
 <button id="atb" type="button"><span>攻击</span><span id="atb-hint">SPACE</span></button>
 <div id="joystick-zone"></div>
@@ -224,6 +228,12 @@ const ATK_RANGE = T * 1.8;
 const ATTACK_COOLDOWN = 300;
 const ATTACK_SWORD_DURATION = 180;
 let killCount = 0;
+let playerHP = 3;
+let maxHP = 3;
+let invincible = false;
+let invincibleTimer = 0;
+let gameOver = false;
+let restartButtonRect = null;
 let isAttacking = false;
 const attackSword = {
   active: false,
@@ -232,14 +242,91 @@ const attackSword = {
 };
 const pigs = [];
 const killsEl = document.getElementById('kills');
+const hpEl = document.getElementById('hp');
 const attackButton = document.getElementById('atb');
+const joystickZone = document.getElementById('joystick-zone');
+const infoEl = document.getElementById('info');
 
 function updateKillDisplay() {
   killsEl.textContent = `击杀 ${killCount}`;
 }
 
+function updateHP() {
+  const full = Array.from({ length: playerHP }, () => '<span class="heart">❤️</span>').join('');
+  const lost = Array.from({ length: Math.max(0, maxHP - playerHP) }, () => '<span class="heart lost">❤️</span>').join('');
+  hpEl.innerHTML = full + lost;
+}
+
+function beginPigChase(pig) {
+  const dx = player.x - pig.x;
+  const dy = player.y - pig.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  pig.vx = dx / dist;
+  pig.vy = dy / dist;
+  if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+  pig.chaseFrames = 40 + Math.random() * 32;
+  pig.chaseTimer = 80 + Math.random() * 110;
+}
+
+function knockPigBack(pig) {
+  const dx = pig.x - player.x;
+  const dy = pig.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const push = T * 0.9;
+  const nx = pig.x + (dx / len) * push;
+  const ny = pig.y + (dy / len) * push;
+  let moved = false;
+
+  if (canPigMove(nx, pig.y)) {
+    pig.x = nx;
+    moved = true;
+  }
+  if (canPigMove(pig.x, ny)) {
+    pig.y = ny;
+    moved = true;
+  }
+
+  pig.x = Math.max(T, Math.min((MW - 1) * T, pig.x));
+  pig.y = Math.max(T, Math.min((MH - 1) * T, pig.y));
+  pig.vx = dx / len;
+  pig.vy = dy / len;
+  if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+  pig.chaseFrames = 0;
+  pig.chaseTimer = 90 + Math.random() * 90;
+  if (!moved) choosePigDirection(pig, true);
+}
+
+function triggerGameOver() {
+  if (gameOver) return;
+  gameOver = true;
+  invincible = false;
+  attackSword.active = false;
+  input.dx = 0;
+  input.dy = 0;
+  player.moving = false;
+  for (const key in keys) keys[key] = false;
+  killsEl.style.display = 'none';
+  hpEl.style.display = 'none';
+  attackButton.style.display = 'none';
+  joystickZone.style.display = 'none';
+  infoEl.style.display = 'none';
+}
+
+function damagePlayer(pig) {
+  if (invincible || gameOver) return;
+  playerHP = Math.max(0, playerHP - 1);
+  updateHP();
+  invincible = true;
+  window.clearTimeout(invincibleTimer);
+  invincibleTimer = window.setTimeout(() => {
+    invincible = false;
+  }, 300);
+  knockPigBack(pig);
+  if (playerHP <= 0) triggerGameOver();
+}
+
 function performAttack() {
-  if (isAttacking) return;
+  if (isAttacking || gameOver) return;
   isAttacking = true;
   attackSword.active = true;
   attackSword.startedAt = performance.now();
@@ -260,6 +347,7 @@ function performAttack() {
 }
 
 updateKillDisplay();
+updateHP();
 
 function drawAttackSword(sx, sy) {
   if (!attackSword.active) return;
@@ -626,7 +714,9 @@ function spawnPig() {
       face: Math.random() < 0.5 ? -1 : 1,
       speed: 0.45 + Math.random() * 0.35,
       stepTimer: 0,
-      phase: Math.random() * Math.PI * 2
+      phase: Math.random() * Math.PI * 2,
+      chaseTimer: 60 + Math.random() * 120,
+      chaseFrames: 0
     };
     choosePigDirection(pig);
     pigs.push(pig);
@@ -649,13 +739,30 @@ function updatePigs() {
       continue;
     }
 
-    pig.stepTimer--;
-    if (pig.stepTimer <= 0) choosePigDirection(pig);
+    if (pig.chaseFrames > 0) {
+      pig.chaseFrames--;
+      const dx = player.x - pig.x;
+      const dy = player.y - pig.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      pig.vx = dx / dist;
+      pig.vy = dy / dist;
+      if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+      if (pig.chaseFrames <= 0) choosePigDirection(pig, true);
+    } else {
+      pig.stepTimer--;
+      if (pig.stepTimer <= 0) choosePigDirection(pig);
+      pig.chaseTimer--;
+      if (pig.chaseTimer <= 0) {
+        pig.chaseTimer = 80 + Math.random() * 110;
+        if (Math.random() < 0.3) beginPigChase(pig);
+      }
+    }
 
     if (pig.vx === 0 && pig.vy === 0) continue;
 
-    const mx = pig.vx * pig.speed;
-    const my = pig.vy * pig.speed;
+    const moveSpeed = pig.chaseFrames > 0 ? pig.speed * 1.65 : pig.speed;
+    const mx = pig.vx * moveSpeed;
+    const my = pig.vy * moveSpeed;
     let moved = false;
 
     if (canPigMove(pig.x + mx, pig.y)) {
@@ -668,9 +775,15 @@ function updatePigs() {
     }
 
     if (!moved) {
+      pig.chaseFrames = 0;
       choosePigDirection(pig, true);
     } else if (Math.abs(mx) > 0.05) {
       pig.face = mx > 0 ? 1 : -1;
+    }
+
+    if (Math.hypot(pig.x - player.x, pig.y - player.y) < T * 1.5) {
+      damagePlayer(pig);
+      if (gameOver) return;
     }
 
     if (pig.x < T || pig.y < T || pig.x > (MW - 1) * T || pig.y > (MH - 1) * T) {
@@ -800,9 +913,35 @@ attackButton.addEventListener('mousedown', e => {
   performAttack();
 });
 
+function tryRestartAt(clientX, clientY) {
+  if (!gameOver || !restartButtonRect) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (clientX - rect.left) * (canvas.width / rect.width);
+  const y = (clientY - rect.top) * (canvas.height / rect.height);
+  if (
+    x >= restartButtonRect.x &&
+    x <= restartButtonRect.x + restartButtonRect.w &&
+    y >= restartButtonRect.y &&
+    y <= restartButtonRect.y + restartButtonRect.h
+  ) {
+    location.reload();
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  tryRestartAt(e.clientX, e.clientY);
+});
+canvas.addEventListener('touchstart', e => {
+  if (!gameOver) return;
+  const touch = e.changedTouches[0];
+  if (!touch) return;
+  e.preventDefault();
+  tryRestartAt(touch.clientX, touch.clientY);
+}, { passive: false });
+
 // 虚拟摇杆
 nipplejs.create({
-  zone: document.getElementById('joystick-zone'),
+  zone: joystickZone,
   mode: 'dynamic',
   color: 'rgba(100,180,255,0.3)',
   size: 100,
@@ -847,6 +986,8 @@ function drawParticles() {
 
 // ─── 主循环 ───
 function update() {
+  if (gameOver) return;
+
   // 合并键盘输入
   let dx = input.dx, dy = input.dy;
   if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
@@ -884,8 +1025,39 @@ function update() {
   updatePigs();
 }
 
+function drawGameOverOverlay() {
+  const buttonW = 168;
+  const buttonH = 46;
+  const buttonX = Math.round((canvas.width - buttonW) / 2);
+  const buttonY = Math.round(canvas.height / 2 + 12);
+
+  restartButtonRect = { x: buttonX, y: buttonY, w: buttonW, h: buttonH };
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 36px monospace';
+  ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2 - 70);
+  ctx.font = '16px monospace';
+  ctx.fillText(`击杀 ${killCount}`, canvas.width / 2, canvas.height / 2 - 24);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('重新开始', canvas.width / 2, buttonY + buttonH / 2 + 1);
+  ctx.restore();
+}
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  restartButtonRect = null;
 
   // 背景
   ctx.fillStyle = '#0a0e0a';
@@ -934,12 +1106,14 @@ function render() {
   grd.addColorStop(1, 'rgba(0,5,0,0.5)');
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (gameOver) drawGameOverOverlay();
 }
 
 function loop() {
-  update();
+  if (!gameOver) update();
   render();
-  requestAnimationFrame(loop);
+  if (!gameOver) requestAnimationFrame(loop);
 }
 
 loop();
