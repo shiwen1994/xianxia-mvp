@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>仙侠 · MVP</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0e0a;touch-action:none}
+canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+#kills{position:fixed;top:8px;left:110px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#a8d8a8;font:12px monospace;z-index:30;pointer-events:none}
+#hp{position:fixed;top:8px;right:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#fff;font:12px monospace;z-index:30;pointer-events:none}
+#hp .heart{display:inline-block}
+#hp .lost{filter:grayscale(1);opacity:0.35}
+#atb{position:fixed;right:16px;bottom:15%;width:64px;height:64px;border-radius:50%;background:rgba(80,30,30,0.85);border:3px solid #cc4444;color:#fff;font:bold 13px monospace;z-index:50;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 12px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.2}
+#atb:active{background:rgba(180,40,40,0.9);transform:scale(0.93)}
+#atb-hint{font-size:10px;opacity:0.7}
+#ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+#joystick-zone{position:fixed;left:0;bottom:0;width:50%;height:60%;z-index:20;touch-action:none}
+#info{position:fixed;top:8px;left:8px;background:rgba(5,15,5,0.88);border:1px solid #2a4a2a;border-radius:8px;padding:6px 12px;color:#6a8a6a;font:12px monospace;text-shadow:0 0 4px #000;z-index:30;pointer-events:none;text-align:center}
+</style>
+</head>
+<body>
+<div id="info">灵墟秘境</div>
+<div id="kills">击杀 0</div>
+<div id="hp"></div>
+<canvas id="c"></canvas>
+<button id="atb" type="button"><span>攻击</span><span id="atb-hint">SPACE</span></button>
+<div id="joystick-zone"></div>
+<script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
+<script>
+// ─── 常量 ───
+const T = 32;            // 瓦片尺寸
+const MW = 80, MH = 60; // 地图尺寸（瓦片数）
+const SPEED = 2.4;       // 玩家速度 (像素/帧)
+const REALMS = [
+  { name: '练气期', icon: '🟢', required: 0, maxHP: 3, atk: 1, atkRange: T * 1.5, speedMul: 1.0 },
+  { name: '筑基期', icon: '🔵', required: 50, maxHP: 5, atk: 2, atkRange: T * 1.8, speedMul: 1.1 },
+  { name: '结丹期', icon: '🟣', required: 200, maxHP: 8, atk: 3, atkRange: T * 2.2, speedMul: 1.2 },
+  { name: '元婴期', icon: '🟡', required: 500, maxHP: 12, atk: 5, atkRange: T * 2.5, speedMul: 1.3 },
+  { name: '化神期', icon: '🔴', required: 1500, maxHP: 18, atk: 8, atkRange: T * 3.0, speedMul: 1.4 }
+];
+const REALM_COLORS = ['#5ad45a', '#4c8dff', '#a45cff', '#f0c94d', '#ff5b5b'];
+
+// ─── 画布 ───
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── 瓦片类型 ───
+// 0=深草, 1=浅草, 2=路, 3=树, 4=石, 5=水, 6=深草+花
+const TILE_SOLID = { 3: true, 4: true, 5: true };
+
+// ─── 程序化地图生成 ───
+const map = [];
+
+// 简单哈希随机
+function hash(x, y) {
+  let h = x * 374761393 + y * 668265263;
+  h = (h ^ (h >> 13)) * 1274126177;
+  return (h ^ (h >> 16)) & 0x7fffffff;
+}
+
+function genMap() {
+  // 先铺满深草
+  for (let y = 0; y < MH; y++) {
+    map[y] = [];
+    for (let x = 0; x < MW; x++) {
+      map[y][x] = hash(x, y) % 5 === 0 ? 1 : 0;
+    }
+  }
+
+  // 生成路径（蜿蜒的小路）
+  let px = Math.floor(MW / 2), py = Math.floor(MH / 2);
+  for (let i = 0; i < 600; i++) {
+    if (px >= 0 && px < MW && py >= 0 && py < MH) {
+      map[py][px] = 2;
+      // 路宽2
+      if (px + 1 < MW) map[py][px + 1] = 2;
+      if (py + 1 < MH) map[py + 1][px] = 2;
+    }
+    const r = hash(i, 777) % 5;
+    if (r === 0) px++;
+    else if (r === 1) px--;
+    else if (r === 2) py++;
+    else if (r === 3) py--;
+    // 偶尔转向
+    if (hash(i, 888) % 3 === 0) {
+      const r2 = hash(i, 999) % 4;
+      if (r2 === 0) px++;
+      else if (r2 === 1) px--;
+      else if (r2 === 2) py++;
+      else py--;
+    }
+    px = Math.max(1, Math.min(MW - 2, px));
+    py = Math.max(1, Math.min(MH - 2, py));
+  }
+
+  // 放树和石头
+  for (let y = 0; y < MH; y++) {
+    for (let x = 0; x < MW; x++) {
+      if (map[y][x] === 2) continue; // 路上不放
+      // 边缘不放
+      if (x === 0 || y === 0 || x === MW - 1 || y === MH - 1) continue;
+      // 出生点附近不放
+      const dx = x - Math.floor(MW / 2), dy = y - Math.floor(MH / 2);
+      if (dx * dx + dy * dy < 25) continue;
+
+      const r = hash(x * 3, y * 7) % 100;
+      if (r < 12) map[y][x] = 3;       // 树
+      else if (r < 16) map[y][x] = 4;  // 石
+      else if (r < 17) map[y][x] = 5;  // 水
+      else if (r < 20) map[y][x] = 6;  // 花
+    }
+  }
+
+  // 确保出生点可走
+  const sx = Math.floor(MW / 2), sy = Math.floor(MH / 2);
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const ny = sy + dy, nx = sx + dx;
+      if (ny >= 0 && ny < MH && nx >= 0 && nx < MW)
+        map[ny][nx] = map[ny][nx] === 2 ? 2 : 0;
+    }
+}
+genMap();
+
+// ─── 瓦片颜色 ───
+const PALETTE = {
+  0: ['#1a2e1a', '#1f351f'],  // 深草（两种随机色）
+  1: ['#253a20', '#2a4025'],  // 浅草
+  2: ['#3a352e', '#433d35'],  // 泥路
+  3: ['#0d1a0d'],             // 树底
+  4: ['#3a3a3a'],             // 石头底
+  5: ['#152535'],             // 水
+  6: ['#1a2e1a'],             // 花底（同深草）
+};
+
+// ─── 绘制单个瓦片 ───
+function drawTile(sx, sy, type, tx, ty) {
+  const p = PALETTE[type];
+  const ci = hash(tx, ty) % p.length;
+  ctx.fillStyle = p[ci];
+  ctx.fillRect(sx, sy, T, T);
+
+  if (type === 0 || type === 1) {
+    // 草地纹理 - 小草点
+    const seed = hash(tx * 13, ty * 17);
+    ctx.fillStyle = type === 0 ? '#243524' : '#30482d';
+    for (let i = 0; i < 3; i++) {
+      const gx = sx + ((seed >> (i * 4)) & 0xf) + 4;
+      const gy = sy + ((seed >> (i * 4 + 2)) & 0xf) + 8;
+      ctx.fillRect(gx, gy, 2, 4);
+    }
+  } else if (type === 2) {
+    // 路纹理
+    const seed = hash(tx * 7, ty * 11);
+    ctx.fillStyle = '#4a4440';
+    for (let i = 0; i < 2; i++) {
+      const gx = sx + ((seed >> (i * 5)) & 0x1e);
+      const gy = sy + ((seed >> (i * 5 + 3)) & 0x1e);
+      ctx.fillRect(gx, gy, 2, 2);
+    }
+  } else if (type === 3) {
+    // 树 - 树干 + 树冠
+    // 树干
+    ctx.fillStyle = '#2a1f15';
+    ctx.fillRect(sx + 12, sy + 16, 8, 16);
+    // 树冠（深绿圆形）
+    ctx.fillStyle = '#0f2a12';
+    ctx.fillRect(sx + 4, sy + 2, 24, 20);
+    ctx.fillStyle = '#143018';
+    ctx.fillRect(sx + 8, sy + 4, 16, 14);
+    // 高光
+    ctx.fillStyle = '#1a3d1e';
+    ctx.fillRect(sx + 10, sy + 6, 8, 6);
+  } else if (type === 4) {
+    // 石头
+    ctx.fillStyle = '#4a4a4a';
+    ctx.fillRect(sx + 6, sy + 10, 20, 16);
+    ctx.fillStyle = '#555555';
+    ctx.fillRect(sx + 8, sy + 12, 16, 10);
+    ctx.fillStyle = '#606060';
+    ctx.fillRect(sx + 10, sy + 13, 8, 4);
+  } else if (type === 5) {
+    // 水 - 波纹
+    const t = Date.now() / 800;
+    ctx.fillStyle = '#1a3040';
+    for (let i = 0; i < 3; i++) {
+      const wx = sx + 4 + i * 10 + Math.sin(t + tx + i) * 3;
+      const wy = sy + 8 + Math.cos(t + ty + i * 2) * 4;
+      ctx.fillRect(wx, wy, 6, 2);
+    }
+  } else if (type === 6) {
+    // 花草地
+    const seed = hash(tx * 19, ty * 23);
+    ctx.fillStyle = '#243524';
+    for (let i = 0; i < 2; i++) {
+      const gx = sx + ((seed >> (i * 4)) & 0xf) + 4;
+      const gy = sy + ((seed >> (i * 4 + 2)) & 0xf) + 8;
+      ctx.fillRect(gx, gy, 2, 4);
+    }
+    // 小花
+    const colors = ['#7a5a8a', '#8a6a6a', '#6a7a6a'];
+    ctx.fillStyle = colors[seed % 3];
+    const fx = sx + (seed & 0x1e) + 4;
+    const fy = sy + ((seed >> 5) & 0x1e) + 4;
+    ctx.fillRect(fx, fy, 3, 3);
+    ctx.fillStyle = '#c0a0d0';
+    ctx.fillRect(fx + 1, fy + 1, 1, 1);
+  }
+}
+
+// ─── 玩家 ───
+const SPAWN_TX = Math.floor(MW / 2);
+const SPAWN_TY = Math.floor(MH / 2);
+const SPAWN_X = SPAWN_TX * T + T / 2;
+const SPAWN_Y = SPAWN_TY * T + T / 2;
+
+const player = {
+  x: SPAWN_X,
+  y: SPAWN_Y,
+  dir: 0,    // 0=下,1=左,2=上,3=右
+  frame: 0,
+  moving: false
+};
+
+const MAX_PIGS = 9;
+const PIG_MAX_HP = 3;
+const ATTACK_COOLDOWN = 300;
+const ATTACK_SWORD_DURATION = 180;
+let killCount = 0;
+let cultivProgress = 0;
+let currentRealm = 0;
+let playerHP = REALMS[0].maxHP;
+let maxHP = REALMS[0].maxHP;
+let playerSpeedMul = REALMS[0].speedMul;
+let invincible = false;
+let invincibleTimer = 0;
+let gameOver = false;
+let restartButtonRect = null;
+let isAttacking = false;
+let breakthroughText = '';
+let breakthroughColor = REALM_COLORS[0];
+let breakthroughUntil = 0;
+const attackSword = {
+  active: false,
+  startedAt: 0,
+  dir: 0
+};
+const pigs = [];
+const killsEl = document.getElementById('kills');
+const hpEl = document.getElementById('hp');
+const attackButton = document.getElementById('atb');
+const joystickZone = document.getElementById('joystick-zone');
+const infoEl = document.getElementById('info');
+
+function updateKillDisplay() {
+  killsEl.textContent = `击杀 ${killCount}`;
+}
+
+function updateHP() {
+  const realm = REALMS[currentRealm];
+  const nextRequired = REALMS[currentRealm + 1]?.required ?? '圆满';
+  const full = Array.from({ length: playerHP }, () => '<span class="heart">❤️</span>').join('');
+  const lost = Array.from({ length: Math.max(0, maxHP - playerHP) }, () => '<span class="heart lost">❤️</span>').join('');
+  hpEl.innerHTML = full + lost + ' ' + realm.icon + ' ' + realm.name + ' ' + cultivProgress + '/' + nextRequired;
+}
+
+function updateCultivDisplay() {
+  updateHP();
+}
+
+function applyRealmStats(fillHP = false) {
+  const realm = REALMS[currentRealm];
+  maxHP = realm.maxHP;
+  playerSpeedMul = realm.speedMul;
+  playerHP = fillHP ? maxHP : Math.min(playerHP, maxHP);
+  updateHP();
+}
+
+function showBreakthrough() {
+  breakthroughText = REALMS[currentRealm].icon + ' 境界突破！' + REALMS[currentRealm].name;
+  breakthroughColor = REALM_COLORS[currentRealm];
+  breakthroughUntil = performance.now() + 3000;
+}
+
+function gainCultivation(amount = 1) {
+  for (let i = 0; i < amount; i++) {
+    cultivProgress++;
+    if (currentRealm < REALMS.length - 1 && cultivProgress >= REALMS[currentRealm + 1].required) {
+      currentRealm++;
+      applyRealmStats(true);
+      showBreakthrough();
+    }
+  }
+  updateCultivDisplay();
+}
+
+function beginPigChase(pig) {
+  const dx = player.x - pig.x;
+  const dy = player.y - pig.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  pig.vx = dx / dist;
+  pig.vy = dy / dist;
+  if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+  pig.chaseFrames = 40 + Math.random() * 32;
+  pig.chaseTimer = 80 + Math.random() * 110;
+}
+
+function knockPigBack(pig) {
+  const dx = pig.x - player.x;
+  const dy = pig.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const push = T * 0.9;
+  const nx = pig.x + (dx / len) * push;
+  const ny = pig.y + (dy / len) * push;
+  let moved = false;
+
+  if (canPigMove(nx, pig.y)) {
+    pig.x = nx;
+    moved = true;
+  }
+  if (canPigMove(pig.x, ny)) {
+    pig.y = ny;
+    moved = true;
+  }
+
+  pig.x = Math.max(T, Math.min((MW - 1) * T, pig.x));
+  pig.y = Math.max(T, Math.min((MH - 1) * T, pig.y));
+  pig.vx = dx / len;
+  pig.vy = dy / len;
+  if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+  pig.chaseFrames = 0;
+  pig.chaseTimer = 90 + Math.random() * 90;
+  if (!moved) choosePigDirection(pig, true);
+}
+
+function triggerGameOver() {
+  if (gameOver) return;
+  gameOver = true;
+  invincible = false;
+  attackSword.active = false;
+  input.dx = 0;
+  input.dy = 0;
+  player.moving = false;
+  for (const key in keys) keys[key] = false;
+  killsEl.style.display = 'none';
+  hpEl.style.display = 'none';
+  attackButton.style.display = 'none';
+  joystickZone.style.display = 'none';
+  infoEl.style.display = 'none';
+}
+
+function damagePlayer(pig) {
+  if (invincible || gameOver) return;
+  playerHP = Math.max(0, playerHP - 1);
+  updateHP();
+  invincible = true;
+  window.clearTimeout(invincibleTimer);
+  invincibleTimer = window.setTimeout(() => {
+    invincible = false;
+  }, 1000);
+  knockPigBack(pig);
+  if (playerHP <= 0) triggerGameOver();
+}
+
+function performAttack() {
+  if (isAttacking || gameOver) return;
+  isAttacking = true;
+  attackSword.active = true;
+  attackSword.startedAt = performance.now();
+  attackSword.dir = player.dir;
+  const attackRange = REALMS[currentRealm].atkRange;
+  const attackDamage = REALMS[currentRealm].atk;
+  setTimeout(() => {
+    isAttacking = false;
+  }, ATTACK_COOLDOWN);
+
+  for (let i = pigs.length - 1; i >= 0; i--) {
+    const pig = pigs[i];
+    if (Math.hypot(pig.x - player.x, pig.y - player.y) > attackRange) continue;
+    pig.hp -= attackDamage;
+    if (pig.hp > 0) continue;
+    pig.alive = false;
+    pigs.splice(i, 1);
+    killCount++;
+    gainCultivation();
+  }
+
+  updateKillDisplay();
+}
+
+applyRealmStats(true);
+updateKillDisplay();
+updateCultivDisplay();
+
+function drawAttackSword(sx, sy) {
+  if (!attackSword.active) return;
+
+  const elapsed = performance.now() - attackSword.startedAt;
+  const progress = Math.min(elapsed / ATTACK_SWORD_DURATION, 1);
+  if (progress >= 1) {
+    attackSword.active = false;
+    return;
+  }
+
+  const fade = 1 - progress;
+  const eased = 1 - Math.pow(1 - progress, 3);
+  const swingConfigs = [
+    { x: 0, y: 5, angle: Math.PI / 2 },
+    { x: -6, y: 0, angle: Math.PI },
+    { x: 0, y: -6, angle: -Math.PI / 2 },
+    { x: 6, y: 0, angle: 0 }
+  ];
+  const cfg = swingConfigs[attackSword.dir];
+  const swingSpan = Math.PI * 0.62;
+  const startAngle = cfg.angle - swingSpan * 0.58;
+  const currentAngle = startAngle + swingSpan * Math.max(eased, 0.06);
+  const innerRadius = 11;
+  const outerRadius = 34 + fade * 6;
+  const glowRadius = outerRadius + 10 + fade * 4;
+  const ox = Math.round(sx + cfg.x);
+  const oy = Math.round(sy + cfg.y);
+  const tipX = ox + Math.cos(currentAngle) * (outerRadius + 4);
+  const tipY = oy + Math.sin(currentAngle) * (outerRadius + 4);
+  const midRadius = innerRadius + (outerRadius - innerRadius) * 0.58;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = `rgba(80, 190, 255, ${0.6 * fade})`;
+  ctx.shadowBlur = 16 + fade * 10;
+
+  const glow = ctx.createRadialGradient(ox, oy, innerRadius * 0.5, ox, oy, glowRadius);
+  glow.addColorStop(0, 'rgba(80,170,255,0)');
+  glow.addColorStop(0.38, `rgba(52,138,255,${0.1 + fade * 0.12})`);
+  glow.addColorStop(0.72, `rgba(70,210,255,${0.22 + fade * 0.22})`);
+  glow.addColorStop(1, 'rgba(70,210,255,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(ox, oy, glowRadius, startAngle, currentAngle);
+  ctx.arc(ox, oy, innerRadius * 0.45, currentAngle, startAngle, true);
+  ctx.closePath();
+  ctx.fill();
+
+  const slash = ctx.createRadialGradient(ox, oy, innerRadius, ox, oy, outerRadius);
+  slash.addColorStop(0, `rgba(180,235,255,${0.02 + fade * 0.02})`);
+  slash.addColorStop(0.35, `rgba(104,190,255,${0.32 + fade * 0.22})`);
+  slash.addColorStop(0.75, `rgba(58,132,255,${0.58 + fade * 0.2})`);
+  slash.addColorStop(1, 'rgba(120,220,255,0)');
+  ctx.fillStyle = slash;
+  ctx.beginPath();
+  ctx.arc(ox, oy, outerRadius, startAngle, currentAngle);
+  ctx.arc(ox, oy, innerRadius, currentAngle, startAngle, true);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(165,225,255,${0.42 * fade})`;
+  ctx.lineWidth = 1.8 + fade;
+  ctx.beginPath();
+  ctx.arc(ox, oy, midRadius, startAngle + 0.04, currentAngle - 0.02);
+  ctx.stroke();
+
+  const edge = ctx.createLinearGradient(ox, oy, tipX, tipY);
+  edge.addColorStop(0, `rgba(150,220,255,0)`);
+  edge.addColorStop(0.48, `rgba(112,196,255,${0.45 + fade * 0.15})`);
+  edge.addColorStop(1, `rgba(255,255,255,${0.88 * fade})`);
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = 3 + fade * 2;
+  ctx.beginPath();
+  ctx.arc(ox, oy, outerRadius - 1, startAngle + 0.02, currentAngle);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(230,250,255,${0.82 * fade})`;
+  ctx.lineWidth = 2 + fade * 1.5;
+  ctx.beginPath();
+  ctx.moveTo(
+    ox + Math.cos(currentAngle) * (innerRadius - 1),
+    oy + Math.sin(currentAngle) * (innerRadius - 1)
+  );
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawPlayer(sx, sy) {
+  const bob = player.moving ? Math.sin(Date.now() / 120) * 1.5 : 0;
+  const px = Math.round(sx);
+  const py = Math.round(sy + bob);
+
+  // 移动时的淡蓝灵力光晕
+  if (player.moving) {
+    const aura = ctx.createRadialGradient(px, py + 1, 2, px, py + 2, 16);
+    aura.addColorStop(0, 'rgba(200,235,255,0.24)');
+    aura.addColorStop(0.55, 'rgba(120,190,255,0.18)');
+    aura.addColorStop(1, 'rgba(120,190,255,0)');
+    ctx.fillStyle = aura;
+    ctx.fillRect(px - 16, py - 16, 32, 32);
+  }
+
+  // 椭圆阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(px, Math.round(sy + 12), 8, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 袖子会随朝向变化
+  const sleeveBase = '#2659ab';
+  const sleeveLight = '#6ea4f0';
+  if (player.dir === 0) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 10, py - 1, 4, 7);
+    ctx.fillRect(px + 6, py - 1, 4, 7);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 9, py, 2, 4);
+    ctx.fillRect(px + 7, py, 2, 4);
+  } else if (player.dir === 2) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 9, py, 3, 6);
+    ctx.fillRect(px + 6, py, 3, 6);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 8, py + 1, 1, 3);
+    ctx.fillRect(px + 7, py + 1, 1, 3);
+  } else if (player.dir === 1) {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 11, py, 5, 7);
+    ctx.fillRect(px + 5, py + 1, 3, 5);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 9, py + 1, 2, 4);
+    ctx.fillRect(px + 6, py + 2, 1, 2);
+  } else {
+    ctx.fillStyle = sleeveBase;
+    ctx.fillRect(px - 8, py + 1, 3, 5);
+    ctx.fillRect(px + 6, py, 5, 7);
+    ctx.fillStyle = sleeveLight;
+    ctx.fillRect(px - 7, py + 2, 1, 2);
+    ctx.fillRect(px + 7, py + 1, 2, 4);
+  }
+
+  // 长袍主体：蓝白渐变
+  const robeGrad = ctx.createLinearGradient(px, py - 4, px, py + 11);
+  robeGrad.addColorStop(0, '#173c82');
+  robeGrad.addColorStop(0.62, '#4e84d8');
+  robeGrad.addColorStop(1, '#f2f7ff');
+  ctx.fillStyle = robeGrad;
+  ctx.fillRect(px - 5, py - 4, 10, 6);
+  ctx.fillRect(px - 6, py + 1, 12, 4);
+  ctx.fillRect(px - 7, py + 4, 14, 2);
+
+  // 内衫与衣襟
+  ctx.fillStyle = '#edf4ff';
+  ctx.fillRect(px - 2, py - 4, 4, 3);
+  ctx.fillStyle = '#b7cdf4';
+  ctx.fillRect(px - 1, py - 1, 2, 4);
+
+  // 多层衣摆
+  ctx.fillStyle = '#183f86';
+  ctx.fillRect(px - 7, py + 5, 14, 2);
+  ctx.fillStyle = '#4d83d5';
+  ctx.fillRect(px - 8, py + 7, 16, 2);
+  ctx.fillStyle = '#f4f8ff';
+  ctx.fillRect(px - 6, py + 9, 12, 2);
+
+  // 腰带：蓝白细腰带
+  ctx.fillStyle = '#eff5ff';
+  ctx.fillRect(px - 5, py + 3, 10, 1);
+  ctx.fillStyle = '#4f7fd8';
+  ctx.fillRect(px - 4, py + 4, 8, 1);
+
+  // 鞋尖
+  ctx.fillStyle = '#dde8fa';
+  ctx.fillRect(px - 3, py + 11, 2, 1);
+  ctx.fillRect(px + 1, py + 11, 2, 1);
+
+  // 头部
+  ctx.fillStyle = '#dcc4a4';
+  ctx.fillRect(px - 4, py - 12, 8, 8);
+
+  // 发带与光泽
+  ctx.fillStyle = '#2d66c6';
+  ctx.fillRect(px - 4, py - 11, 8, 2);
+  ctx.fillStyle = '#a9dfff';
+  ctx.fillRect(px - 2, py - 11, 4, 1);
+
+  // 黑发：分层刘海 + 鬓角
+  ctx.fillStyle = '#10131b';
+  ctx.fillRect(px - 5, py - 13, 10, 3);
+  ctx.fillRect(px - 4, py - 10, 2, 3);
+  ctx.fillRect(px - 1, py - 10, 2, 4);
+  ctx.fillRect(px + 2, py - 10, 2, 3);
+  if (player.dir === 2) {
+    ctx.fillRect(px - 5, py - 9, 10, 6);
+    ctx.fillRect(px - 4, py - 3, 8, 4);
+  } else {
+    ctx.fillRect(px - 5, py - 8, 2, 7);
+    ctx.fillRect(px + 3, py - 8, 2, 7);
+  }
+
+  // 眼睛：蓝色瞳孔 + 白色高光
+  if (player.dir !== 2) {
+    ctx.fillStyle = '#4c88e6';
+    if (player.dir === 0) {
+      ctx.fillRect(px - 3, py - 7, 2, 2);
+      ctx.fillRect(px + 1, py - 7, 2, 2);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px - 3, py - 7, 1, 1);
+      ctx.fillRect(px + 1, py - 7, 1, 1);
+    } else if (player.dir === 1) {
+      ctx.fillRect(px - 3, py - 7, 2, 2);
+      ctx.fillRect(px - 1, py - 7, 1, 1);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px - 3, py - 7, 1, 1);
+    } else {
+      ctx.fillRect(px, py - 7, 1, 1);
+      ctx.fillRect(px + 2, py - 7, 2, 2);
+      ctx.fillStyle = '#f8fbff';
+      ctx.fillRect(px + 2, py - 7, 1, 1);
+    }
+  }
+}
+
+function canPigMove(nx, ny) {
+  const hw = 8, hh = 5;
+  return !isSolid(nx - hw, ny - hh) &&
+         !isSolid(nx + hw, ny - hh) &&
+         !isSolid(nx - hw, ny + hh) &&
+         !isSolid(nx + hw, ny + hh);
+}
+
+function choosePigDirection(pig, forced = false) {
+  const dirs = [
+    { vx: 1, vy: 0 },
+    { vx: -1, vy: 0 },
+    { vx: 0, vy: 1 },
+    { vx: 0, vy: -1 },
+    { vx: 0.7, vy: 0.7 },
+    { vx: -0.7, vy: 0.7 },
+    { vx: 0.7, vy: -0.7 },
+    { vx: -0.7, vy: -0.7 },
+    { vx: 0, vy: 0 }
+  ];
+  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+  pig.vx = dir.vx;
+  pig.vy = dir.vy;
+  if (dir.vx !== 0) pig.face = dir.vx > 0 ? 1 : -1;
+  pig.stepTimer = (forced ? 12 : 28) + Math.random() * (forced ? 18 : 72);
+}
+
+function spawnPig() {
+  for (let i = 0; i < 80; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = (12 + Math.random() * 8) * T;
+    const x = SPAWN_X + Math.cos(angle) * radius;
+    const y = SPAWN_Y + Math.sin(angle) * radius;
+
+    if (x < T || y < T || x > (MW - 1) * T || y > (MH - 1) * T) continue;
+    if (Math.hypot(x - SPAWN_X, y - SPAWN_Y) / T < 12) continue;
+    if (!canPigMove(x, y)) continue;
+
+    let overlap = false;
+    for (const other of pigs) {
+      if (Math.hypot(other.x - x, other.y - y) < T * 1.5) {
+        overlap = true;
+        break;
+      }
+    }
+    if (overlap) continue;
+
+    const pig = {
+      x,
+      y,
+      hp: PIG_MAX_HP,
+      vx: 0,
+      vy: 0,
+      face: Math.random() < 0.5 ? -1 : 1,
+      speed: 0.45 + Math.random() * 0.35,
+      stepTimer: 0,
+      phase: Math.random() * Math.PI * 2,
+      chaseTimer: 60 + Math.random() * 120,
+      chaseFrames: 0
+    };
+    choosePigDirection(pig);
+    pigs.push(pig);
+    return pig;
+  }
+  return null;
+}
+
+function updatePigs() {
+  while (pigs.length < MAX_PIGS) {
+    if (!spawnPig()) break;
+  }
+
+  for (let i = pigs.length - 1; i >= 0; i--) {
+    const pig = pigs[i];
+
+    if (pig.x < 0 || pig.y < 0 || pig.x > MW * T || pig.y > MH * T) {
+      pigs.splice(i, 1);
+      spawnPig();
+      continue;
+    }
+
+    if (pig.chaseFrames > 0) {
+      pig.chaseFrames--;
+      const dx = player.x - pig.x;
+      const dy = player.y - pig.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      pig.vx = dx / dist;
+      pig.vy = dy / dist;
+      if (Math.abs(pig.vx) > 0.05) pig.face = pig.vx > 0 ? 1 : -1;
+      if (pig.chaseFrames <= 0) choosePigDirection(pig, true);
+    } else {
+      pig.stepTimer--;
+      if (pig.stepTimer <= 0) choosePigDirection(pig);
+      pig.chaseTimer--;
+      if (pig.chaseTimer <= 0) {
+        pig.chaseTimer = 80 + Math.random() * 110;
+        if (Math.random() < 0.3) beginPigChase(pig);
+      }
+    }
+
+    if (pig.vx === 0 && pig.vy === 0) continue;
+
+    const moveSpeed = pig.chaseFrames > 0 ? pig.speed * 1.65 : pig.speed;
+    const mx = pig.vx * moveSpeed;
+    const my = pig.vy * moveSpeed;
+    let moved = false;
+
+    if (canPigMove(pig.x + mx, pig.y)) {
+      pig.x += mx;
+      moved = true;
+    }
+    if (canPigMove(pig.x, pig.y + my)) {
+      pig.y += my;
+      moved = true;
+    }
+
+    if (!moved) {
+      pig.chaseFrames = 0;
+      choosePigDirection(pig, true);
+    } else if (Math.abs(mx) > 0.05) {
+      pig.face = mx > 0 ? 1 : -1;
+    }
+
+    if (Math.hypot(pig.x - player.x, pig.y - player.y) < T * 1.5) {
+      damagePlayer(pig);
+      if (gameOver) return;
+    }
+
+    if (pig.x < T || pig.y < T || pig.x > (MW - 1) * T || pig.y > (MH - 1) * T) {
+      pigs.splice(i, 1);
+      spawnPig();
+    }
+  }
+}
+
+function drawPig(sx, sy, pig = null) {
+  const face = pig ? pig.face : 1;
+  const walk = pig && (pig.vx !== 0 || pig.vy !== 0) ? Math.sin(Date.now() / 110 + pig.phase) : 0;
+  const legA = Math.max(0, Math.round(walk * 2));
+  const legB = Math.max(0, Math.round(-walk * 2));
+
+  ctx.save();
+  ctx.translate(Math.round(sx), Math.round(sy));
+  ctx.scale(face, 1);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 13, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 腿
+  ctx.fillStyle = '#3b2416';
+  ctx.fillRect(-7, 7, 2, 5 + legA);
+  ctx.fillRect(-2, 7, 2, 5 + legB);
+  ctx.fillRect(3, 7, 2, 5 + legB);
+  ctx.fillRect(7, 7, 2, 5 + legA);
+
+  // 鬃毛
+  ctx.fillStyle = '#352012';
+  ctx.fillRect(-8, -8, 11, 3);
+  ctx.fillRect(-2, -10, 4, 2);
+
+  // 身体
+  ctx.fillStyle = '#6b4427';
+  ctx.fillRect(-10, -6, 19, 10);
+  ctx.fillRect(-8, 4, 15, 4);
+  ctx.fillStyle = '#8a5a35';
+  ctx.fillRect(-8, -4, 13, 6);
+  ctx.fillRect(-5, 4, 8, 2);
+
+  // 猪头
+  ctx.fillStyle = '#72492a';
+  ctx.fillRect(7, -4, 8, 8);
+  ctx.fillStyle = '#96623c';
+  ctx.fillRect(10, -2, 6, 6);
+  ctx.fillStyle = '#b07b55';
+  ctx.fillRect(12, 0, 5, 4);
+
+  // 面部细节与獠牙
+  ctx.fillStyle = '#1c120b';
+  ctx.fillRect(11, -1, 1, 1);
+  ctx.fillRect(15, 1, 1, 1);
+  ctx.fillRect(15, 3, 1, 1);
+  ctx.fillStyle = '#efe5d6';
+  ctx.fillRect(13, 4, 2, 1);
+  ctx.fillRect(14, 5, 2, 1);
+
+  // 耳朵与尾巴
+  ctx.fillStyle = '#4a2d19';
+  ctx.fillRect(9, -6, 3, 2);
+  ctx.fillRect(-12, -1, 2, 1);
+
+  ctx.restore();
+}
+
+function drawPigs() {
+  const ordered = pigs.slice().sort((a, b) => a.y - b.y);
+  for (const pig of ordered) {
+    const sx = Math.round(pig.x - cam.x);
+    const sy = Math.round(pig.y - cam.y);
+    if (sx < -32 || sx > canvas.width + 32 || sy < -32 || sy > canvas.height + 32) continue;
+    drawPig(sx, sy, pig);
+  }
+}
+
+// ─── 相机 ───
+const cam = { x: 0, y: 0 };
+
+function updateCamera() {
+  const tx = player.x - canvas.width / 2;
+  const ty = player.y - canvas.height / 2;
+  cam.x += (tx - cam.x) * 0.1;
+  cam.y += (ty - cam.y) * 0.1;
+  // 限制边界
+  cam.x = Math.max(0, Math.min(MW * T - canvas.width, cam.x));
+  cam.y = Math.max(0, Math.min(MH * T - canvas.height, cam.y));
+}
+
+// ─── 碰撞检测 ───
+function isSolid(px, py) {
+  const tx = Math.floor(px / T);
+  const ty = Math.floor(py / T);
+  if (tx < 0 || ty < 0 || tx >= MW || ty >= MH) return true;
+  return !!TILE_SOLID[map[ty][tx]];
+}
+
+function canMove(nx, ny) {
+  // 检测角色碰撞箱（稍小于一个瓦片）
+  const hw = 5, hh = 5;
+  return !isSolid(nx - hw, ny - hh) &&
+         !isSolid(nx + hw, ny - hh) &&
+         !isSolid(nx - hw, ny + hh) &&
+         !isSolid(nx + hw, ny + hh);
+}
+
+// ─── 输入 ───
+const input = { dx: 0, dy: 0 };
+
+// 键盘
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') performAttack();
+  e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+attackButton.addEventListener('touchstart', e => {
+  e.preventDefault();
+  performAttack();
+}, { passive: false });
+attackButton.addEventListener('mousedown', e => {
+  e.preventDefault();
+  performAttack();
+});
+
+function tryRestartAt(clientX, clientY) {
+  if (!gameOver || !restartButtonRect) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (clientX - rect.left) * (canvas.width / rect.width);
+  const y = (clientY - rect.top) * (canvas.height / rect.height);
+  if (
+    x >= restartButtonRect.x &&
+    x <= restartButtonRect.x + restartButtonRect.w &&
+    y >= restartButtonRect.y &&
+    y <= restartButtonRect.y + restartButtonRect.h
+  ) {
+    location.reload();
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  tryRestartAt(e.clientX, e.clientY);
+});
+canvas.addEventListener('touchstart', e => {
+  if (!gameOver) return;
+  const touch = e.changedTouches[0];
+  if (!touch) return;
+  e.preventDefault();
+  tryRestartAt(touch.clientX, touch.clientY);
+}, { passive: false });
+
+// 虚拟摇杆
+nipplejs.create({
+  zone: joystickZone,
+  mode: 'dynamic',
+  color: 'rgba(100,180,255,0.3)',
+  size: 100,
+  restOpacity: 0.3
+}).on('move', (evt, data) => {
+  if (data.direction) {
+    const a = data.angle.radian;
+    const f = Math.min(data.force, 1);
+    input.dx = Math.cos(a) * f;
+    input.dy = -Math.sin(a) * f;
+  }
+}).on('end', () => {
+  input.dx = 0;
+  input.dy = 0;
+});
+
+// ─── 粒子系统（灵力微光）───
+const particles = [];
+for (let i = 0; i < 30; i++) {
+  particles.push({
+    x: Math.random() * MW * T,
+    y: Math.random() * MH * T,
+    speed: 0.2 + Math.random() * 0.3,
+    phase: Math.random() * Math.PI * 2,
+    size: 1 + Math.floor(Math.random() * 2)
+  });
+}
+
+function drawParticles() {
+  const t = Date.now() / 1000;
+  ctx.fillStyle = 'rgba(120,200,255,0.4)';
+  for (const p of particles) {
+    const sx = p.x - cam.x;
+    const sy = p.y - cam.y + Math.sin(t * p.speed + p.phase) * 8;
+    if (sx < -10 || sx > canvas.width + 10 || sy < -10 || sy > canvas.height + 10) continue;
+    const alpha = 0.2 + Math.sin(t * 2 + p.phase) * 0.2;
+    ctx.globalAlpha = alpha;
+    ctx.fillRect(Math.round(sx), Math.round(sy), p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBreakthroughOverlay() {
+  if (!breakthroughText || performance.now() > breakthroughUntil) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 36px monospace';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.strokeText(breakthroughText, canvas.width / 2, canvas.height / 2);
+  ctx.fillStyle = breakthroughColor;
+  ctx.fillText(breakthroughText, canvas.width / 2, canvas.height / 2);
+  ctx.restore();
+}
+
+// ─── 主循环 ───
+function update() {
+  if (gameOver) return;
+
+  // 合并键盘输入
+  let dx = input.dx, dy = input.dy;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1;
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) dy = -1;
+  if (keys['ArrowDown'] || keys['s'] || keys['S']) dy = 1;
+
+  // 归一化
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len > 0.1) {
+    dx = (dx / len) * SPEED * playerSpeedMul;
+    dy = (dy / len) * SPEED * playerSpeedMul;
+    player.moving = true;
+
+    // 朝向
+    if (Math.abs(dx) > Math.abs(dy)) {
+      player.dir = dx > 0 ? 3 : 1;
+    } else {
+      player.dir = dy > 0 ? 0 : 2;
+    }
+
+    // 分轴移动（滑墙效果）
+    const nx = player.x + dx;
+    const ny = player.y + dy;
+    if (canMove(nx, player.y)) player.x = nx;
+    if (canMove(player.x, ny)) player.y = ny;
+
+    // 世界边界
+    player.x = Math.max(T, Math.min((MW - 1) * T, player.x));
+    player.y = Math.max(T, Math.min((MH - 1) * T, player.y));
+  } else {
+    player.moving = false;
+  }
+
+  updatePigs();
+}
+
+function drawGameOverOverlay() {
+  const buttonW = 168;
+  const buttonH = 46;
+  const buttonX = Math.round((canvas.width - buttonW) / 2);
+  const buttonY = Math.round(canvas.height / 2 + 12);
+
+  restartButtonRect = { x: buttonX, y: buttonY, w: buttonW, h: buttonH };
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 36px monospace';
+  ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2 - 70);
+  ctx.font = '16px monospace';
+  ctx.fillText(`击杀 ${killCount}`, canvas.width / 2, canvas.height / 2 - 24);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  ctx.fillRect(buttonX, buttonY, buttonW, buttonH);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(buttonX, buttonY, buttonW, buttonH);
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('重新开始', canvas.width / 2, buttonY + buttonH / 2 + 1);
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  restartButtonRect = null;
+
+  // 背景
+  ctx.fillStyle = '#0a0e0a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  updateCamera();
+
+  // 计算可视瓦片范围
+  const startTX = Math.max(0, Math.floor(cam.x / T) - 1);
+  const startTY = Math.max(0, Math.floor(cam.y / T) - 1);
+  const endTX = Math.min(MW - 1, Math.ceil((cam.x + canvas.width) / T) + 1);
+  const endTY = Math.min(MH - 1, Math.ceil((cam.y + canvas.height) / T) + 1);
+
+  // 绘制地图
+  for (let ty = startTY; ty <= endTY; ty++) {
+    for (let tx = startTX; tx <= endTX; tx++) {
+      const sx = Math.round(tx * T - cam.x);
+      const sy = Math.round(ty * T - cam.y);
+      drawTile(sx, sy, map[ty][tx], tx, ty);
+    }
+  }
+
+  // 绘制粒子
+  drawParticles();
+
+  // 绘制野猪
+  drawPigs();
+
+  // 绘制玩家
+  const px = Math.round(player.x - cam.x);
+  const py = Math.round(player.y - cam.y);
+  if (attackSword.active && attackSword.dir === 2) {
+    drawAttackSword(px, py);
+  }
+  drawPlayer(px, py);
+  if (!attackSword.active || attackSword.dir !== 2) {
+    drawAttackSword(px, py);
+  }
+
+  // 简单暗角效果
+  const grd = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, canvas.width * 0.3,
+    canvas.width / 2, canvas.height / 2, canvas.width * 0.75
+  );
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(0,5,0,0.5)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawBreakthroughOverlay();
+  if (gameOver) drawGameOverOverlay();
+}
+
+function loop() {
+  if (!gameOver) update();
+  render();
+  if (!gameOver) requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
